@@ -1391,6 +1391,7 @@ var Pages = {
       if (info.PowerGraph && window.Chart) specialKeys.push('chart');
       specialKeys.push('clock');
       specialKeys.push('weather');
+      specialKeys.push('scriptlogs');
       /* Temperature chart tiles — one per sensor, hidden by default */
       S.sensors = info.Sensors || [];
       for (var ts = 0; ts < S.sensors.length; ts++) {
@@ -1438,6 +1439,8 @@ var Pages = {
           /* Auto-hide weather tile when no weather data has ever been received */
           if (!S.weather && !Store.get('weatherSeen')) continue;
           h += self._weatherTileHtml();
+        } else if (key === 'scriptlogs') {
+          h += self._scriptLogsTileHtml();
         } else if (km.keyToGauge[key] !== undefined) {
           var gi = km.keyToGauge[key];
           var t = tiles[gi];
@@ -1803,6 +1806,7 @@ var Pages = {
         }
         if (key === 'clock') self._initClock();
         if (key === 'weather' && S.weather) self._updateWeatherTile();
+        if (key === 'scriptlogs') self._updateScriptLogsTile();
         /* Add to order if missing */
         var ord = Store.getTileOrder(km.allKeys);
         if (ord.indexOf(key) === -1) ord.push(key);
@@ -1813,6 +1817,7 @@ var Pages = {
           if (d && d.tiles) Pages._updateGauges(d.tiles);
           if (d) self._updateInfoTiles(d);
           if (d && d.Weather) { S.weather = d.Weather; self._updateWeatherTile(); }
+          self._updateScriptLogsTile();
         });
       });
 
@@ -2022,6 +2027,93 @@ var Pages = {
         '<div id="weather-tile-body" class="weather-body">' +
         '<div class="text-muted" style="font-size:.8rem;text-align:center;padding:16px 0">No weather data</div>' +
         '</div></div>';
+    },
+
+    _scriptLogsTileHtml: function() {
+      var savedSize = Store.getTileSize('scriptlogs') || 'md';
+      return '<div class="tile tile-' + esc(savedSize) + '" role="listitem" data-tile="scriptlogs" data-size="' + esc(savedSize) + '" draggable="false" style="cursor:pointer;" onclick="if(!S.editMode) Router.go(\'scriptlogs\');">' +
+        '<button type="button" class="tile-hide-btn" title="Hide tile" tabindex="-1" aria-hidden="true">&times;</button>' +
+        '<div class="tile-drag-handle" title="Drag to reorder" aria-hidden="true">' + icon('logs') + '</div>' +
+        '<div class="tile-edit-controls" style="display:none" aria-hidden="true"><div class="tile-ctrl-row">' +
+        '<span class="tile-ctrl-label">Size</span>' +
+        '<button type="button" class="tile-size-btn" data-dir="down" title="Smaller" tabindex="-1">&minus;</button>' +
+        '<button type="button" class="tile-size-btn" data-dir="up" title="Larger" tabindex="-1">+</button>' +
+        '</div></div>' +
+        '<h2 class="tile-title">Script Logs Status</h2>' +
+        '<div id="scriptlogs-tile-body" style="padding:4px 0;">' +
+        '<div class="text-muted" style="font-size:.8rem;text-align:center;padding:12px 0">Loading script log status…</div>' +
+        '</div></div>';
+    },
+
+    _updateScriptLogsTile: function() {
+      var $b = $('#scriptlogs-tile-body');
+      if (!$b.length) return;
+
+      API.get('script_logs_json').done(function(d) {
+        if (!d) return;
+
+        function evalStatus(key, dataObj) {
+          if (!dataObj || !dataObj.lines) return { hasErr: false, hasWarn: false };
+          var ackTs = Store.get('sl_ack_time_' + key, 0);
+          var ackIdx = Store.get('sl_ack_index_' + key, -1);
+          var hasErr = false;
+          var hasWarn = false;
+
+          dataObj.lines.forEach(function(line, idx) {
+            var lineLower = line.toLowerCase();
+            var isErr = lineLower.indexOf('[error]') !== -1 || lineLower.indexOf('error') !== -1 || lineLower.indexOf('failed') !== -1 || lineLower.indexOf('exception') !== -1;
+            var isWarn = lineLower.indexOf('[warn]') !== -1 || lineLower.indexOf('warning') !== -1;
+
+            if (!isErr && !isWarn) return;
+
+            var tm = line.match(/(?:\[)?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})(?:\])?/);
+            var lineTs = tm ? new Date(tm[1].replace(' ', 'T')).getTime() : null;
+
+            var isAck = false;
+            if (lineTs && ackTs && lineTs <= ackTs) {
+              isAck = true;
+            } else if (!lineTs && idx <= ackIdx) {
+              isAck = true;
+            }
+
+            if (!isAck) {
+              if (isErr) hasErr = true;
+              if (isWarn) hasWarn = true;
+            }
+          });
+          return { hasErr: hasErr, hasWarn: hasWarn };
+        }
+
+        var syncSt = evalStatus('sync', d.sync_log);
+        var backupSt = evalStatus('backup', d.backup_log);
+        var sdSt = evalStatus('sdcard', d.sdcard_backup_log);
+
+        var overallErr = syncSt.hasErr || backupSt.hasErr || sdSt.hasErr;
+        var overallWarn = syncSt.hasWarn || backupSt.hasWarn || sdSt.hasWarn;
+
+        function formatBadge(st) {
+          if (st.hasErr) return '<span style="background:var(--danger,#f05252); color:#fff; padding:2px 7px; border-radius:10px; font-weight:600; font-size:0.72rem;">NEW ERROR</span>';
+          if (st.hasWarn) return '<span style="background:#f59e0b; color:#fff; padding:2px 7px; border-radius:10px; font-weight:600; font-size:0.72rem;">NEW WARN</span>';
+          return '<span style="background:var(--green,#4CAF50); color:#fff; padding:2px 7px; border-radius:10px; font-weight:600; font-size:0.72rem;">OK</span>';
+        }
+
+        var html = '';
+        if (overallErr) {
+          html += '<div style="margin-bottom:8px; font-weight:600; color:var(--danger,#f05252); font-size:0.85rem; text-align:center;">⚠️ New Script Errors</div>';
+        } else if (overallWarn) {
+          html += '<div style="margin-bottom:8px; font-weight:600; color:#f59e0b; font-size:0.85rem; text-align:center;">⚠️ New Script Warnings</div>';
+        } else {
+          html += '<div style="margin-bottom:8px; font-weight:600; color:var(--green,#4CAF50); font-size:0.85rem; text-align:center;">✓ All Script Logs Normal</div>';
+        }
+
+        html += '<div style="font-size:0.82rem; display:flex; flex-direction:column; gap:6px;">';
+        html += '<div style="display:flex; justify-content:space-between; align-items:center;"><span>Sync Log:</span> ' + formatBadge(syncSt) + '</div>';
+        html += '<div style="display:flex; justify-content:space-between; align-items:center;"><span>Daily Backup:</span> ' + formatBadge(backupSt) + '</div>';
+        html += '<div style="display:flex; justify-content:space-between; align-items:center;"><span>SD Card Backup:</span> ' + formatBadge(sdSt) + '</div>';
+        html += '</div>';
+
+        $b.html(html);
+      });
     },
 
     OV_SPANS: [2, 3, 4, 'full'],
@@ -2297,7 +2389,7 @@ var Pages = {
       var tiles = S.tileConfig || [], infoTiles = Pages.status.INFO_TILES, h = '';
       var km = S.keyMap;
       if (!km) return;
-      var specialTitles = {overview: 'Status Overview', chart: S.chartTitle || 'Power Output', clock: 'Clock', weather: 'Weather'};
+      var specialTitles = {overview: 'Status Overview', chart: S.chartTitle || 'Power Output', clock: 'Clock', weather: 'Weather', scriptlogs: 'Script Logs Status'};
       /* Add temp chart titles */
       if (S.sensors) {
         for (var tdi = 0; tdi < S.sensors.length; tdi++) {
