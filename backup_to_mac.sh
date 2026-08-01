@@ -16,8 +16,39 @@ log() {
     echo "[$timestamp] [$level] $*" | tee -a "$LOG_FILE"
 }
 
+# Check for stale network mount and attempt auto-remount recovery
+check_and_fix_stale_mount() {
+    local target="$1"
+
+    if ! timeout 5 touch "${target}/.mount_test" >/dev/null 2>&1; then
+        log "WARN" "Stale or unresponsive network mount detected at ${target} (No such device / Stale file handle)!"
+        log "WARN" "Attempting lazy unmount and automatic remount..."
+
+        sudo umount -l -f "$target" >/dev/null 2>&1
+        sleep 2
+        sudo mount "$target" >/dev/null 2>&1 || sudo mount -a >/dev/null 2>&1
+        sleep 2
+
+        if timeout 5 touch "${target}/.mount_test" >/dev/null 2>&1; then
+            rm -f "${target}/.mount_test" >/dev/null 2>&1
+            log "INFO" "✓ Successfully recovered and remounted ${target}."
+            return 0
+        else
+            log "ERROR" "Failed to recover network mount ${target}. Host or network share is unreachable!"
+            return 1
+        fi
+    else
+        rm -f "${target}/.mount_test" >/dev/null 2>&1
+        return 0
+    fi
+}
+
 log "INFO" "=================================================="
 log "INFO" "Starting Daily Genmon Backup Procedure..."
+
+if ! check_and_fix_stale_mount "$TARGET_DIR"; then
+    exit 1
+fi
 
 mkdir -p "$TARGET_DIR" 2>/dev/null
 
