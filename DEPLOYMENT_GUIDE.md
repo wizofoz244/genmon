@@ -1,33 +1,52 @@
-# Genmon Custom Setup & Deployment Guide
+# Complete Genmon Setup, Backup & Deployment Guide
 
-This document captures the complete configuration, data processing pipeline, custom add-ons, GitHub fork management, and Raspberry Pi systemd deployment for this Genmon generator monitoring system.
-
----
-
-## Architecture Overview
-
-```
- +-------------------------------------------------------------------------+
- |                            Raspberry Pi                                 |
- |                                                                         |
- |  +--------------------+         Socket RPC          +----------------+  |
- |  |   Genmon Daemon    | <-------------------------> | genmaint_sync  |  |
- |  |    (genmond)       | (port 9082 / generator:*)   |  Add-on Daemon |  |
- |  +--------------------+                             +----------------+  |
- |            |                                                |           |
- |            v                                                v           |
- |  /etc/genmon/maintlog.json  <-------------------------------+           |
- |  /etc/genmon/outage.txt                                                 |
- |  /etc/genmon/outage_summary.csv                                         |
- +-------------------------------------------------------------------------+
-```
+This document captures the complete architecture, data processing scripts, automated backup routines, custom add-ons, web UI optimization, GitHub fork management, and Raspberry Pi systemd deployment for this Genmon generator monitoring system.
 
 ---
 
-## 1. Maintenance Journal & Outage Log Data Pipeline
+## 1. System Architecture & Component Map
+
+```
+ +-----------------------------------------------------------------------------------+
+ |                             Mac Server (192.168.128.15)                           |
+ |                                                                                   |
+ |  SMB Share: //192.168.128.15/pibackup  <======================================+   |
+ +-------------------------------------------------------------------------------+---|
+                                                                                 |
+                                                                  CIFS / SMB     |
+ +-------------------------------------------------------------------------------+---|
+ |                          Raspberry Pi (genmonpi)                              |   |
+ |                                                                               |   |
+ |  Mount Point: /mnt/pibackup <=================================================+   |
+ |                                                                                   |
+ |  +--------------------+         Socket RPC          +-------------------------+   |
+ |  |   Genmon Daemon    | <-------------------------> |     genmaint_sync       |   |
+ |  |    (genmond)       | (port 9082 / generator:*)   |  Add-on Daemon Service  |   |
+ |  +--------------------+                             +-------------------------+   |
+ |            |                                                     |                |
+ |            v                                                     v                |
+ |  /etc/genmon/maintlog.json  <------------------------------------+                |
+ |  /etc/genmon/outage.txt                                                           |
+ |  /etc/genmon/outage_summary.csv                                                   |
+ |                                                                                   |
+ |  +-----------------------------------------------------------------------------+  |
+ |  | Cron Automated Tasks                                                        |  |
+ |  |  - Daily @ 4:00 AM:  /home/genmonpi/backup_to_mac.sh (Genmon Archive)       |  |
+ |  |  - Sunday @ 4:00 AM: /home/genmonpi/sdcard_backup_to_mac.sh (SD Card Image)  |  |
+ |  +-----------------------------------------------------------------------------+  |
+ +-----------------------------------------------------------------------------------+
+```
+
+---
+
+## 2. Maintenance Journal & Outage Log Data Pipeline
 
 ### Maintenance Log (`maintlog.json`)
-- **Location**: `/etc/genmon/maintlog.json`
+- **Location**: `/etc/genmon/maintlog.json` (and synced to local workspace)
+- **Data Conversion Scripts**:
+  - `process_all_maint_data.py`: Parses historical exports (`statusHistory.csv`) and merges user service logs.
+  - `update_all_logs.py`: Updates engine run hours for all entries based on session runtimes.
+  - `merge_maintlog_full.py`: Deduplicates and combines full maintenance history.
 - **Entry Schema**:
   ```json
   {
@@ -37,39 +56,93 @@ This document captures the complete configuration, data processing pipeline, cus
       "comment": "Description of event or service item"
   }
   ```
-- **Engine Hours Calculation**:
-  - Accounts for controller replacement on **06/20/2026** (baseline reference of **138.9 hours**).
-  - Integrates cumulative runtime from engine sessions (Exercise, Utility Loss, Manual).
+- **Engine Hours Baseline & Scaling**:
+  - Accounts for controller replacement on **06/20/2026** (reference target of **138.9 hours**).
+  - Scaled using cumulative runtime from engine run sessions (Exercise, Utility Loss, Manual).
 
-### Outage Log & Fuel Estimation (`outage.txt` & `outage_summary.csv`)
+### Outage Tracking & Fuel Estimation (`outage.txt` & `outage_summary.csv`)
 - **Locations**: `/etc/genmon/outage.txt`, `/etc/genmon/outage_summary.csv`
+- **Scripts**: `build_outagelog.py`, `build_outagelog_with_fuel.py`
 - **Fuel Rate**: `200.0 cubic feet / hour` (Natural Gas).
-- Excludes 5-minute weekly exercise sessions from outage fuel calculations.
+- **Outage Duration Format**: `X day, HH:MM:SS`
+- **Rules**: 5-minute weekly exercise sessions are excluded from outage fuel totals.
 
 ---
 
-## 2. Automated Run & Alarm Log Sync (`addon/genmaint_sync.py`)
+## 3. Automated Controller Run & Alarm Log Sync (`addon/genmaint_sync.py`)
 
-A standalone add-on daemon that monitors the generator controller's sliding 50-entry **Run Log** and **Alarm Log** via Genmon's RPC socket interface.
+A standalone add-on daemon that monitors the generator controller's 50-entry **Run Log** and **Alarm Log** via Genmon's RPC socket interface.
 
-### Features
-- **Classification**: Converts all new controller log events into `type: "Observation"` entries.
-- **Engine Run Hours**: Assigns live engine run hours for current events and back-interpolates engine hours for buffered past events based on run session durations.
-- **Deduplication**: Maintains state in `/etc/genmon/maint_sync_state.json` and checks existing `maintlog.json` records before appending.
-- **Atomic Writes**: Uses temporary files and `os.replace` to protect files against power outages or abrupt shutdowns.
+### Key Capabilities
+- **Classification**: Automatically converts all controller run and alarm events into `type: "Observation"` entries.
+- **Engine Run Hours**:
+  - Assigns live engine run hours for current events.
+  - Back-interpolates engine hours for past buffered events by calculating run session durations between event timestamp and present.
+- **State Tracking & Deduplication**: Maintains persistent state in `/etc/genmon/maint_sync_state.json` to prevent duplicate records across reboots.
+- **Atomic Writes**: Uses temporary files and `os.replace` to prevent file corruption.
 
-### CLI Options
+### Command Line Interface
 ```bash
-sudo python3 ~/genmon/addon/genmaint_sync.py -c /etc/genmon [options]
+sudo python3 /home/genmonpi/genmon/addon/genmaint_sync.py -c /etc/genmon [options]
 ```
-- `-1`, `--oneshot`: Run a single pass and exit.
-- `-d`, `--dry-run`: Preview calculations without modifying files.
-- `-r`, `--recalculate-hours`: Update existing 0.0 hour `Observation` entries.
-- `-i`, `--interval`: Set polling frequency (default: 60s).
+- `-1`, `--oneshot`: Perform a single sync pass and exit.
+- `-d`, `--dry-run`: Preview log parsing and run hour calculations without modifying files.
+- `-r`, `--recalculate-hours`: Recalculate engine run hours for existing `Observation` entries with `0.0` hours.
+- `-i`, `--interval`: Polling interval in seconds (default: `60`).
+
+### Documentation & Unit Tests
+- Add-on Documentation: [addon/README_genmaint_sync.md](file:///Users/oz/Develop/genmon/addon/README_genmaint_sync.md)
+- Unit Test Suite: `python3 -m unittest addon/test_genmaint_sync.py`
 
 ---
 
-## 3. GitHub Fork & Git Workflow
+## 4. Automated Backup Routines to Mac Server
+
+The Raspberry Pi backs up data automatically to an SMB network share hosted on a Mac server (`192.168.128.15`).
+
+### SMB Share Mount Configuration (`/etc/fstab`)
+- **Mac Server IP**: `192.168.128.15`
+- **Share Name**: `pibackup`
+- **Mount Point**: `/mnt/pibackup`
+- **Credentials File**: `/etc/wincredentials` (`username=pibackup`, `password=...`)
+- **`/etc/fstab` entry**:
+  ```fstab
+  //192.168.128.15/pibackup /mnt/pibackup cifs credentials=/etc/wincredentials,iocharset=utf8,vers=3.0,nofail,x-systemd.automount 0 0
+  ```
+
+### Backup Script 1: Daily Genmon Data Archive (`/home/genmonpi/backup_to_mac.sh`)
+- Uses `genmonmaint.sh` to generate compressed archive `genmon_backup_YYYY-MM-DD_HHMMSS.tar.gz`.
+- Copies archive to `/mnt/pibackup/`.
+- Removes local temporary files automatically (`rm -f`).
+- **Retention Policy**: Deletes backup archives older than 30 days.
+- **Log File**: `/home/genmonpi/backup.log`
+- **Cron Schedule**: Daily at 4:00 AM
+  ```cron
+  0 4 * * * /home/genmonpi/backup_to_mac.sh
+  ```
+
+### Backup Script 2: Weekly Live SD Card Image (`/home/genmonpi/sdcard_backup_to_mac.sh`)
+- Uses the `image-backup` utility (`/usr/local/bin/image-backup` from `RonR-RPi-image-utils`).
+- Installed dependencies: `bc`, `kpartx`, `rsync`, `parted`, `dosfstools`, `e2fsprogs`.
+- Creates live full system image: `/mnt/pibackup/genmon_sdcard_YYYY-MM-DD_HHMMSS.img`.
+- **Retention Policy**: Retains the 4 most recent weekly SD card images.
+- **Log File**: `/home/genmonpi/sdcard_backup.log`
+- **Cron Schedule**: Weekly on Sunday at 4:00 AM
+  ```cron
+  0 4 * * 0 /home/genmonpi/sdcard_backup_to_mac.sh
+  ```
+
+---
+
+## 5. Web UI Optimization & FOUC Prevention
+
+To prevent **Flash of Unstyled Content (FOUC)** when loading the Genmon web interface:
+- **CSS Preloading**: Preload core stylesheets (`static/css/genmon.css`, `bootstrap.min.css`) in `<head>`.
+- **Visibility Transition**: Set initial opacity on container elements until stylesheet `load` events fire, ensuring smooth, unstyled-free page renders.
+
+---
+
+## 6. GitHub Fork & Git Workflow
 
 The project is maintained on a personal GitHub fork: **[`wizofoz244/genmon`](https://github.com/wizofoz244/genmon)**.
 
@@ -77,37 +150,40 @@ The project is maintained on a personal GitHub fork: **[`wizofoz244/genmon`](htt
 - `origin`: `https://github.com/wizofoz244/genmon.git` (Personal Fork)
 - `upstream`: `https://github.com/jgyates/genmon.git` (Official Repository)
 
-### Development Workflow (Mac to Raspberry Pi)
+### Mac to Raspberry Pi Deployment Workflow
 
-1. **On your Mac**: Commit and push changes to your GitHub fork:
+1. **On Mac**: Commit and push changes:
    ```bash
    git add .
-   git commit -m "Describe your changes"
+   git commit -m "Description of updates"
    git push origin master
    ```
 
-2. **On your Raspberry Pi**: Pull updates from your GitHub fork:
+2. **On Raspberry Pi**: Pull updates:
    ```bash
    cd ~/genmon
    git pull origin master
    ```
 
+3. **Syncing Upstream Genmon Updates**:
+   ```bash
+   git fetch upstream
+   git merge upstream/master
+   git push origin master
+   ```
+
 ---
 
-## 4. Raspberry Pi Deployment & Systemd Service
+## 7. Raspberry Pi Systemd Service Deployment
 
-### User Context
-- **Raspberry Pi Username**: `genmonpi`
-- **Genmon Directory**: `/home/genmonpi/genmon`
+### System Information
+- **User**: `genmonpi`
+- **Path**: `/home/genmonpi/genmon`
 - **Config Directory**: `/etc/genmon`
 
-### Systemd Service Setup (`genmaint_sync.service`)
+### Systemd Unit File (`/etc/systemd/system/genmaint_sync.service`)
 
-The add-on is configured to start automatically on system boot after the network is online, continuously retrying until Genmon is available.
-
-#### 1. Create `/etc/systemd/system/genmaint_sync.service`:
-```bash
-sudo bash -c 'cat << "EOF" > /etc/systemd/system/genmaint_sync.service
+```ini
 [Unit]
 Description=Genmon Service Journal Sync Addon
 After=network.target
@@ -120,43 +196,24 @@ RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
-EOF'
 ```
 
-#### 2. Enable & Start Service:
+### Management Commands
 ```bash
+# Reload systemd configuration
 sudo systemctl daemon-reload
-sudo systemctl enable genmaint_sync.service
-sudo systemctl start genmaint_sync.service
-```
 
-#### 3. Monitor Service Status & Logs:
-```bash
-# Check service status
+# Enable service on boot
+sudo systemctl enable genmaint_sync.service
+
+# Start / Restart service
+sudo systemctl start genmaint_sync.service
+sudo systemctl restart genmaint_sync.service
+
+# View status
 sudo systemctl status genmaint_sync.service
 
-# Live follow file log
+# View real-time logs
 sudo tail -f /etc/genmon/genmaint_sync.log
-
-# Live follow systemd journal
 sudo journalctl -u genmaint_sync.service -f
 ```
-
----
-
-## 5. Maintenance & Troubleshooting Commands
-
-- **Sync Check (One-shot test)**:
-  ```bash
-  sudo python3 /home/genmonpi/genmon/addon/genmaint_sync.py -c /etc/genmon --oneshot
-  ```
-- **Recalculate Zero-Hour Entries**:
-  ```bash
-  sudo python3 /home/genmonpi/genmon/addon/genmaint_sync.py -c /etc/genmon --oneshot --recalculate-hours
-  ```
-- **Syncing Upstream Genmon Core Updates**:
-  ```bash
-  git fetch upstream
-  git merge upstream/master
-  git push origin master
-  ```
