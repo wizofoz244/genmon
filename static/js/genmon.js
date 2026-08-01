@@ -567,6 +567,7 @@ var NAV_ITEMS = [
   { id:'logs',          label:'Logs',            page:'logs',          icon:'logs' },
   { id:'monitor',       label:'Monitor',         page:'monitor',       icon:'monitor' },
   { id:'journal',       label:'Service Journal', page:'journal',       icon:'journal' },
+  { id:'scriptlogs',    label:'Script Logs',     page:'scriptlogs',    icon:'logs' },
   { id:'settings',      label:'Settings',        page:'settings',      icon:'settings' },
   { id:'registers',     label:'Modbus',          page:'registers',     icon:'modbus' },
   { id:'addons',        label:'Add-Ons',         page:'addons',        icon:'addons' },
@@ -4228,6 +4229,124 @@ var Pages = {
       });
     },
     update: function(d) { Pages.journal._list(d); }
+  },
+
+  /* ========== SCRIPT LOGS ========== */
+  scriptlogs: {
+    _activeTab: 'sync',
+    _data: null,
+    render: function() {
+      var $c = $('#main-content');
+      var h = '';
+      h += '<div class="hdr-actions-row"><h2 style="margin:0;">Script & Add-on Logs</h2>';
+      h += '<button class="btn btn-sm btn-outline" id="sl-refresh">' + btnIcon('refresh', 14) + ' Refresh</button></div>';
+      h += '<div style="margin-top:12px; margin-bottom:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">';
+      h += '<button class="btn btn-sm sl-tab btn-primary" data-tab="sync">Maintenance Sync Log <span id="sl-badge-sync"></span></button>';
+      h += '<button class="btn btn-sm sl-tab btn-outline" data-tab="backup">Daily Backup Log <span id="sl-badge-backup"></span></button>';
+      h += '<button class="btn btn-sm sl-tab btn-outline" data-tab="sdcard">Weekly SD Card Log <span id="sl-badge-sdcard"></span></button>';
+      h += '<input type="text" id="sl-search" class="form-control" style="max-width:240px; margin-left:auto;" placeholder="Search log lines…">';
+      h += '</div>';
+      h += '<div id="sl-status-banner" style="margin-bottom:12px;"></div>';
+      h += '<div id="sl-log-path" style="font-size:0.85rem; color:var(--text-muted); margin-bottom:8px;"></div>';
+      h += '<pre id="sl-content" style="background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:16px; font-family:monospace; font-size:0.85rem; max-height:550px; overflow-y:auto; white-space:pre-wrap; word-break:break-all;"></pre>';
+
+      $c.html(h);
+
+      var self = Pages.scriptlogs;
+
+      $('.sl-tab').on('click', function() {
+        $('.sl-tab').removeClass('btn-primary').addClass('btn-outline');
+        $(this).removeClass('btn-outline').addClass('btn-primary');
+        self._activeTab = $(this).data('tab');
+        self._renderTab();
+      });
+
+      $('#sl-refresh').on('click', function() { self._load(); });
+      $('#sl-search').on('input', function() { self._renderTab(); });
+
+      self._load();
+    },
+    _load: function() {
+      var self = Pages.scriptlogs;
+      $('#sl-content').html('<span style="color:var(--text-muted)">Loading script logs…</span>');
+      API.get('script_logs_json').done(function(d) {
+        self._data = d;
+        self._renderTab();
+      }).fail(function() {
+        $('#sl-content').html('<span style="color:var(--danger, #f05252)">Error loading script logs. Ensure Genmon server is running.</span>');
+      });
+    },
+    _renderTab: function() {
+      var self = Pages.scriptlogs;
+      if (!self._data) return;
+
+      var tabKey = self._activeTab;
+      var logData = null;
+      if (tabKey === 'sync') logData = self._data.sync_log;
+      else if (tabKey === 'backup') logData = self._data.backup_log;
+      else if (tabKey === 'sdcard') logData = self._data.sdcard_backup_log;
+
+      if (!logData) {
+        $('#sl-content').text('No log data available.');
+        return;
+      }
+
+      function setBadge(tabId, dataObj) {
+        var $b = $('#sl-badge-' + tabId);
+        if (!dataObj) return;
+        if (dataObj.has_error) {
+          $b.html(' <span style="background:var(--danger, #f05252); color:#fff; padding:2px 6px; border-radius:10px; font-size:0.75rem;">ERROR</span>');
+        } else if (dataObj.has_warning) {
+          $b.html(' <span style="background:#f59e0b; color:#fff; padding:2px 6px; border-radius:10px; font-size:0.75rem;">WARN</span>');
+        } else {
+          $b.html(' <span style="background:var(--green, #4CAF50); color:#fff; padding:2px 6px; border-radius:10px; font-size:0.75rem;">OK</span>');
+        }
+      }
+      setBadge('sync', self._data.sync_log);
+      setBadge('backup', self._data.backup_log);
+      setBadge('sdcard', self._data.sdcard_backup_log);
+
+      var bannerHtml = '';
+      if (logData.has_error) {
+        bannerHtml = '<div style="background:rgba(240,82,82,0.15); border:1px solid var(--danger, #f05252); color:var(--danger, #f05252); padding:10px 14px; border-radius:8px; font-weight:600;">⚠️ Errors detected in log! Review highlighted red lines below.</div>';
+      } else if (logData.has_warning) {
+        bannerHtml = '<div style="background:rgba(245,158,11,0.15); border:1px solid #f59e0b; color:#f59e0b; padding:10px 14px; border-radius:8px; font-weight:600;">⚠️ Warnings detected in log. Review highlighted yellow lines below.</div>';
+      } else {
+        bannerHtml = '<div style="background:rgba(76,175,80,0.15); border:1px solid var(--green, #4CAF50); color:var(--green, #4CAF50); padding:10px 14px; border-radius:8px; font-weight:600;">✓ All log routines operating normally. No errors detected.</div>';
+      }
+      $('#sl-status-banner').html(bannerHtml);
+      $('#sl-log-path').html('File Path: <code>' + esc(logData.path || '') + '</code>');
+
+      var search = ($('#sl-search').val() || '').toLowerCase();
+      var lines = logData.lines || [];
+      var formattedLines = [];
+
+      lines.forEach(function(line) {
+        if (search && line.toLowerCase().indexOf(search) === -1) return;
+
+        var lineLower = line.toLowerCase();
+        var isErr = lineLower.indexOf('[error]') !== -1 || lineLower.indexOf('error') !== -1 || lineLower.indexOf('failed') !== -1 || lineLower.indexOf('exception') !== -1;
+        var isWarn = lineLower.indexOf('[warn]') !== -1 || lineLower.indexOf('warning') !== -1;
+
+        var lineEsc = esc(line);
+
+        if (isErr) {
+          formattedLines.push('<div style="background:rgba(240,82,82,0.2); color:#ff6b6b; padding:2px 4px; border-radius:4px; margin:2px 0; font-weight:600;">' + lineEsc + '</div>');
+        } else if (isWarn) {
+          formattedLines.push('<div style="background:rgba(245,158,11,0.2); color:#fbbf24; padding:2px 4px; border-radius:4px; margin:2px 0; font-weight:600;">' + lineEsc + '</div>');
+        } else {
+          formattedLines.push('<div>' + lineEsc + '</div>');
+        }
+      });
+
+      if (formattedLines.length === 0) {
+        $('#sl-content').html('<span style="color:var(--text-muted)">No matching log entries found.</span>');
+      } else {
+        $('#sl-content').html(formattedLines.join(''));
+        var el = document.getElementById('sl-content');
+        if (el) el.scrollTop = el.scrollHeight;
+      }
+    }
   },
 
   /* ========== SETTINGS ========== */

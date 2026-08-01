@@ -142,7 +142,22 @@ To prevent **Flash of Unstyled Content (FOUC)** when loading the Genmon web inte
 
 ---
 
-## 6. GitHub Fork & Git Workflow
+## 6. Web UI Script & Add-on Log Viewer
+
+A dedicated **Script Logs** page in the left navigation sidebar allows real-time inspection of background automated scripts and add-on services:
+- **Monitored Logs**:
+  - 🔄 **Maintenance Sync Log** (`/etc/genmon/genmaint_sync.log`)
+  - 📦 **Daily Backup Log** (`/home/genmonpi/backup.log`)
+  - 💾 **Weekly SD Card Log** (`/home/genmonpi/sdcard_backup.log`)
+- **Error & Warning Highlighting**:
+  - Badges on tab buttons (`OK`, `WARN`, `ERROR`).
+  - Status banner at top of log viewer.
+  - Log lines containing errors or failures are highlighted in **Red**, warnings in **Yellow**, and normal info in **Green**.
+  - Built-in search filtering and refresh support.
+
+---
+
+## 7. GitHub Fork & Git Workflow
 
 The project is maintained on a personal GitHub fork: **[`wizofoz244/genmon`](https://github.com/wizofoz244/genmon)**.
 
@@ -174,7 +189,7 @@ The project is maintained on a personal GitHub fork: **[`wizofoz244/genmon`](htt
 
 ---
 
-## 7. Raspberry Pi Systemd Service Deployment
+## 8. Raspberry Pi Systemd Service Deployment
 
 ### System Information
 - **User**: `genmonpi`

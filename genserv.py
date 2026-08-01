@@ -790,7 +790,99 @@ def command(command):
 
 
 # -------------------------------------------------------------------------------
+def get_script_logs_json():
+    def read_log_file(filepath):
+        if not os.path.exists(filepath):
+            return {
+                "path": filepath,
+                "lines": ["Log file does not exist yet."],
+                "has_error": False,
+                "has_warning": False,
+            }
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                lines = [l.rstrip() for l in f.readlines()]
+                tail_lines = lines[-200:] if len(lines) > 200 else lines
+                full_text = "\n".join(tail_lines).lower()
+                has_err = any(
+                    k in full_text
+                    for k in [
+                        "error",
+                        "fail",
+                        "failed",
+                        "critical",
+                        "exception",
+                        "permission denied",
+                        "unit genmon.service not found",
+                    ]
+                )
+                has_warn = any(k in full_text for k in ["warn", "warning"])
+                return {
+                    "path": filepath,
+                    "lines": tail_lines if tail_lines else ["Log file is empty."],
+                    "has_error": has_err,
+                    "has_warning": has_warn,
+                }
+        except Exception as e:
+            return {
+                "path": filepath,
+                "lines": [f"Error reading file: {e}"],
+                "has_error": True,
+                "has_warning": False,
+            }
+
+    sync_paths = [
+        "/etc/genmon/genmaint_sync.log",
+        "/home/genmonpi/genmon/genmaint_sync.log",
+        "./genmaint_sync.log",
+    ]
+    sync_log = None
+    for p in sync_paths:
+        if os.path.exists(p):
+            sync_log = read_log_file(p)
+            break
+    if not sync_log:
+        sync_log = read_log_file("/etc/genmon/genmaint_sync.log")
+
+    backup_paths = [
+        "/home/genmonpi/backup.log",
+        "/home/genmonpi/genmon_backup.log",
+        "/etc/genmon/backup.log",
+        "./backup.log",
+    ]
+    backup_log = None
+    for p in backup_paths:
+        if os.path.exists(p):
+            backup_log = read_log_file(p)
+            break
+    if not backup_log:
+        backup_log = read_log_file("/home/genmonpi/backup.log")
+
+    sd_paths = [
+        "/home/genmonpi/sdcard_backup.log",
+        "/etc/genmon/sdcard_backup.log",
+        "./sdcard_backup.log",
+    ]
+    sd_log = None
+    for p in sd_paths:
+        if os.path.exists(p):
+            sd_log = read_log_file(p)
+            break
+    if not sd_log:
+        sd_log = read_log_file("/home/genmonpi/sdcard_backup.log")
+
+    return {
+        "sync_log": sync_log,
+        "backup_log": backup_log,
+        "sdcard_backup_log": sd_log,
+    }
+
+
+# -------------------------------------------------------------------------------
 def ProcessCommand(command):
+
+    if command == "script_logs_json":
+        return json.dumps(get_script_logs_json())
 
     try:
         command_list = [
