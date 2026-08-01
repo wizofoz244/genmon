@@ -78,7 +78,9 @@ class GenMaintSync(MySupport):
         self.poll_interval = poll_interval
         self.oneshot = oneshot
         self.dry_run = dry_run
-        self.log = log or SetupLogger("genmaint_sync", os.path.join(self.config_path, "genmaint_sync.log"))
+        log_dir = self.config_path if (os.path.isdir(self.config_path) and os.access(self.config_path, os.W_OK)) else "."
+        log_file_path = os.path.join(log_dir, "genmaint_sync.log")
+        self.log = log or SetupLogger("genmaint_sync", log_file_path)
         self.console = console or SetupLogger("genmaint_sync_console", "", stream=True)
 
         self.running = True

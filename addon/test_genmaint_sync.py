@@ -31,7 +31,7 @@ class TestGenMaintSync(unittest.TestCase):
             (datetime.datetime(2026, 7, 27, 12, 0, 0), "Running - Utility Loss"),
             (datetime.datetime(2026, 7, 27, 18, 0, 0), "Stopped - Auto"),
         ]
-        sync = GenMaintSync(oneshot=True, dry_run=True)
+        sync = GenMaintSync(config_path=".", oneshot=True, dry_run=True)
         sessions = sync.extract_run_sessions(lines)
         self.assertEqual(len(sessions), 2)
         self.assertEqual(sessions[0][2], 720.0)  # 12 minutes = 720s
@@ -39,7 +39,7 @@ class TestGenMaintSync(unittest.TestCase):
 
     def test_calculate_entry_run_hours(self) -> None:
         """Tests engine run hour calculation logic."""
-        sync = GenMaintSync(oneshot=True, dry_run=True)
+        sync = GenMaintSync(config_path=".", oneshot=True, dry_run=True)
         live_hrs = 144.0
 
         run_sessions = [
