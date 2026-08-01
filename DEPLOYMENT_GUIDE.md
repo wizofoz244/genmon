@@ -270,3 +270,69 @@ sudo systemctl status genmaint_sync.service
 sudo tail -f /etc/genmon/genmaint_sync.log
 sudo journalctl -u genmaint_sync.service -f
 ```
+
+---
+
+## 9. USB Wi-Fi Adapter Setup & 2.4 GHz Band Locking
+
+Generators housed in heavy metal enclosures require maximum signal range and obstacle penetration. The **2.4 GHz Wi-Fi band** penetrates metal enclosures and exterior walls far better than 5 GHz signals.
+
+### Disabling On-Board Raspberry Pi Wi-Fi (Using High-Gain USB Wi-Fi Adapter)
+
+If an external high-gain USB Wi-Fi adapter is plugged in, disable the internal Raspberry Pi Wi-Fi and Bluetooth chips to avoid interface conflicts and save power:
+
+1. Edit `/boot/firmware/config.txt` (or `/boot/config.txt` on older OS versions):
+   ```bash
+   sudo nano /boot/firmware/config.txt
+   ```
+2. Append the following lines at the bottom of the file:
+   ```text
+   # Disable on-board Wi-Fi and Bluetooth to use external USB Wi-Fi adapter
+   dtoverlay=disable-wifi
+   dtoverlay=disable-bt
+   ```
+3. Reboot the Raspberry Pi:
+   ```bash
+   sudo reboot
+   ```
+
+---
+
+### Disabling 5 GHz Band (Locking Connection to 2.4 GHz Only)
+
+#### Method A: NetworkManager (`nmcli` - Raspberry Pi OS Bookworm / Modern)
+
+Restrict the Wi-Fi profile to the 2.4 GHz band (`bg` band):
+
+```bash
+# Restrict connection to 2.4 GHz 802.11bg band
+sudo nmcli connection modify "YOUR_SSID" 802-11-wireless.band bg
+
+# Set channel auto-selection for 2.4 GHz
+sudo nmcli connection modify "YOUR_SSID" 802-11-wireless.channel 0
+
+# Apply changes and reconnect
+sudo nmcli connection up "YOUR_SSID"
+```
+
+#### Method B: `wpa_supplicant.conf` (Raspberry Pi OS Bullseye / Legacy)
+
+Restrict scanning frequencies strictly to 2.4 GHz channels (Channels 1–11 / 2412–2462 MHz):
+
+1. Edit `/etc/wpa_supplicant/wpa_supplicant.conf`:
+   ```bash
+   sudo nano /etc/wpa_supplicant/wpa_supplicant.conf
+   ```
+2. Add the `freq_list` parameter to your network configuration block:
+   ```text
+   network={
+       ssid="YOUR_SSID"
+       psk="YOUR_PASSWORD"
+       freq_list=2412 2417 2422 2427 2432 2437 2442 2447 2452 2457 2462
+   }
+   ```
+3. Reconfigure Wi-Fi interface:
+   ```bash
+   sudo wpa_cli -i wlan0 reconfigure
+   ```
+
