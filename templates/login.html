@@ -68,8 +68,8 @@
   <script>
     (function() {
       function reveal() { document.documentElement.classList.add('fouc-ready'); }
-      if (document.readyState === 'interactive' || document.readyState === 'complete') { reveal(); }
-      else { document.addEventListener('DOMContentLoaded', reveal); }
+      if (document.readyState === 'complete') { reveal(); }
+      else { window.addEventListener('load', reveal); setTimeout(reveal, 500); }
     })();
   </script>
 </head>

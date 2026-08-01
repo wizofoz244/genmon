@@ -14,19 +14,21 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="preload" href="css/genmon.css" as="style">
-    <link rel="stylesheet" href="css/genmon.css">
+    <link rel="stylesheet" href="css/genmon.css" id="main-css" onload="document.documentElement.classList.add('fouc-ready')">
     <style>
         html { visibility: hidden; opacity: 0; }
-        html.fouc-ready { visibility: visible; opacity: 1; transition: opacity 0.15s ease-in; }
+        html.fouc-ready { visibility: visible; opacity: 1; transition: opacity 0.2s ease-in; }
     </style>
     <script src="js/system-theme.js"></script>
     <script>
         (function() {
             function reveal() { document.documentElement.classList.add('fouc-ready'); }
-            if (document.readyState === 'interactive' || document.readyState === 'complete') {
+            var css = document.getElementById('main-css');
+            if (css && css.sheet) {
                 reveal();
             } else {
-                document.addEventListener('DOMContentLoaded', reveal);
+                window.addEventListener('load', reveal);
+                setTimeout(reveal, 1000);
             }
         })();
     </script>
