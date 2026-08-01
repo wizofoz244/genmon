@@ -4235,8 +4235,8 @@ var Pages = {
   scriptlogs: {
     _activeTab: 'sync',
     _data: null,
-    render: function() {
-      var $c = $('#main-content');
+    render: function($c) {
+      $c = $c || $('#content');
       var h = '';
       h += '<div class="hdr-actions-row"><h2 style="margin:0;">Script & Add-on Logs</h2>';
       h += '<button class="btn btn-sm btn-outline" id="sl-refresh">' + btnIcon('refresh', 14) + ' Refresh</button></div>';
