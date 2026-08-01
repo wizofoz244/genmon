@@ -20,7 +20,7 @@ log() {
 check_and_fix_stale_mount() {
     local target="$1"
 
-    if ! timeout 5 touch "${target}/.mount_test" >/dev/null 2>&1; then
+    if ! timeout 5 sudo touch "${target}/.mount_test" >/dev/null 2>&1; then
         log "WARN" "Stale or unresponsive network mount detected at ${target} (No such device / Stale file handle)!"
         log "WARN" "Attempting lazy unmount and automatic remount..."
 
@@ -29,8 +29,8 @@ check_and_fix_stale_mount() {
         sudo mount "$target" >/dev/null 2>&1 || sudo mount -a >/dev/null 2>&1
         sleep 2
 
-        if timeout 5 touch "${target}/.mount_test" >/dev/null 2>&1; then
-            rm -f "${target}/.mount_test" >/dev/null 2>&1
+        if timeout 5 sudo touch "${target}/.mount_test" >/dev/null 2>&1; then
+            sudo rm -f "${target}/.mount_test" >/dev/null 2>&1
             log "INFO" "✓ Successfully recovered and remounted ${target}."
             return 0
         else
@@ -38,7 +38,7 @@ check_and_fix_stale_mount() {
             return 1
         fi
     else
-        rm -f "${target}/.mount_test" >/dev/null 2>&1
+        sudo rm -f "${target}/.mount_test" >/dev/null 2>&1
         return 0
     fi
 }
