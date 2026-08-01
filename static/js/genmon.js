@@ -4335,6 +4335,7 @@ var Pages = {
       var h = '';
       h += '<div class="hdr-actions-row"><h2 style="margin:0;">Script & Add-on Logs</h2>';
       h += '<div style="display:flex; gap:8px;">';
+      h += '<button class="btn btn-sm btn-outline-danger" id="sl-clear">&times; Clear Log</button>';
       h += '<button class="btn btn-sm btn-outline" id="sl-ack">' + btnIcon('check', 14) + ' Acknowledge Errors</button>';
       h += '<button class="btn btn-sm btn-outline" id="sl-refresh">' + btnIcon('refresh', 14) + ' Refresh</button>';
       h += '</div></div>';
@@ -4371,6 +4372,23 @@ var Pages = {
         Store.set('sl_ack_index_' + tabKey, lastIdx);
         Store._flush();
         self._renderTab();
+      });
+
+      $('#sl-clear').on('click', function() {
+        var tabKey = self._activeTab;
+        var names = { sync: 'Maintenance Sync Log', backup: 'Daily Backup Log', sdcard: 'Weekly SD Card Log' };
+        var logName = names[tabKey] || 'Log';
+
+        Modal.confirm('Clear Log', 'Are you sure you want to clear all entries in the ' + logName + '?', function() {
+          API.get('clear_script_log_json?log=' + tabKey).done(function() {
+            Store.set('sl_ack_time_' + tabKey, new Date().getTime());
+            Store.set('sl_ack_index_' + tabKey, 0);
+            Store._flush();
+            self._load();
+          }).fail(function() {
+            Modal.alert('Error', 'Failed to clear log file.');
+          });
+        });
       });
 
       self._load();

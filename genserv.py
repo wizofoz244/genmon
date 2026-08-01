@@ -879,10 +879,68 @@ def get_script_logs_json():
 
 
 # -------------------------------------------------------------------------------
+def clear_script_log_json(log_type):
+    if not HasWriteAccess():
+        return json.dumps({"result": "Error", "message": "Read Only Mode"})
+
+    target_map = {
+        "sync": [
+            "/etc/genmon/genmaint_sync.log",
+            "/home/genmonpi/genmon/genmaint_sync.log",
+            "./genmaint_sync.log",
+        ],
+        "backup": [
+            "/home/genmonpi/backup.log",
+            "/home/genmonpi/genmon_backup.log",
+            "/etc/genmon/backup.log",
+            "./backup.log",
+        ],
+        "sdcard": [
+            "/home/genmonpi/sdcard_backup.log",
+            "/etc/genmon/sdcard_backup.log",
+            "./sdcard_backup.log",
+        ],
+    }
+
+    paths = target_map.get(log_type, [])
+    cleared = False
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    init_msg = f"[{now_str}] [INFO] Log cleared by user.\n"
+
+    for p in paths:
+        if os.path.exists(p):
+            try:
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(init_msg)
+                cleared = True
+            except Exception as e:
+                LogErrorLine(f"Error clearing log {p}: {e}")
+
+    if not cleared and paths:
+        primary_path = paths[0]
+        try:
+            os.makedirs(os.path.dirname(primary_path), exist_ok=True)
+            with open(primary_path, "w", encoding="utf-8") as f:
+                f.write(init_msg)
+            cleared = True
+        except Exception as e:
+            LogErrorLine(f"Error creating cleared log {primary_path}: {e}")
+
+    if cleared:
+        return json.dumps({"result": "OK", "message": "Log cleared successfully."})
+    else:
+        return json.dumps({"result": "Error", "message": "Could not clear log file."})
+
+
+# -------------------------------------------------------------------------------
 def ProcessCommand(command):
 
     if command == "script_logs_json":
         return json.dumps(get_script_logs_json())
+
+    if command.startswith("clear_script_log_json"):
+        log_type = request.args.get("log", "sync")
+        return clear_script_log_json(log_type)
 
     try:
         command_list = [

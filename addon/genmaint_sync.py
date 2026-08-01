@@ -16,6 +16,7 @@ Google Python Style Guide compliant:
 import argparse
 import datetime
 import json
+import logging
 import os
 import signal
 import sys
