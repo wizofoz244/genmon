@@ -133,7 +133,7 @@ if [ ! -f "$MASTER_IMG" ]; then
     log "INFO" "No existing valid master image found. Creating a NEW full SD card image..."
     if [ -x "$BACKUP_UTIL" ]; then
         log "INFO" "Invoking $BACKUP_UTIL for initial image creation..."
-        printf "\n\n\ny\n" | "$BACKUP_UTIL" "$MASTER_IMG" 2>&1 | tee -a "$LOG_FILE"
+        printf "${MASTER_IMG}\n\n\ny\n" | "$BACKUP_UTIL" 2>&1 | tee -a "$LOG_FILE"
     else
         log "WARN" "$BACKUP_UTIL utility not found. Creating raw live system image fallback..."
         dd if=/dev/mmcblk0 of="$MASTER_IMG" bs=4M status=progress 2>&1 | tee -a "$LOG_FILE"
