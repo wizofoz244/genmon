@@ -249,28 +249,50 @@ class GenMaintSync(MySupport):
         if not self.client:
             return 0.0
 
-        try:
-            status_resp = self.client.ProcessMonitorCommand("generator: status_json")
-            if status_resp:
-                if isinstance(status_resp, dict):
+        def find_key(obj: Any, target_key: str) -> Optional[Any]:
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    if k == target_key:
+                        return v
+                    res = find_key(v, target_key)
+                    if res is not None:
+                        return res
+            elif isinstance(obj, list):
+                for item in obj:
+                    res = find_key(item, target_key)
+                    if res is not None:
+                        return res
+            return None
+
+        for cmd in ("generator: status_json", "generator: maint_json"):
+            try:
+                status_resp = self.client.ProcessMonitorCommand(cmd)
+                if not status_resp:
+                    continue
+
+                if isinstance(status_resp, (dict, list)):
                     data = status_resp
                 else:
                     resp_str = str(status_resp).strip()
                     start_idx = resp_str.find("{")
-                    end_idx = resp_str.rfind("}")
+                    if start_idx == -1:
+                        start_idx = resp_str.find("[")
+                    end_idx = max(resp_str.rfind("}"), resp_str.rfind("]"))
                     if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
                         json_str = resp_str[start_idx : end_idx + 1]
                         data = json.loads(json_str)
                     else:
                         data = {}
-                status_dict = data.get("Status", {}) if isinstance(data, dict) else {}
-                gen_dict = status_dict.get("Generator Status", {})
-                run_hrs_str = gen_dict.get("Total Run Hours", "0.0")
-                # Parse numeric value from string (e.g. "138.9 h" -> 138.9)
-                clean_val = "".join(c for c in str(run_hrs_str) if c.isdigit() or c == ".")
-                return round(float(clean_val), 1) if clean_val else 0.0
-        except Exception as err:
-            self.log_error(f"Error fetching live run hours: {err}")
+
+                hrs_val = find_key(data, "Total Run Hours")
+                if hrs_val is not None:
+                    # Clean numeric value (e.g. "138.9 h" or 138.9)
+                    clean_val = "".join(c for c in str(hrs_val) if c.isdigit() or c == ".")
+                    if clean_val:
+                        return round(float(clean_val), 1)
+            except Exception as err:
+                self.log_error(f"Error fetching live run hours with {cmd}: {err}")
+
         return 0.0
 
     @staticmethod
