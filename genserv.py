@@ -5,7 +5,7 @@
 #  AUTHOR: Jason G Yates
 #    DATE: 20-Dec-2016
 #
-# MODIFICATIONS:
+# MODIFICATIONS: Added manual backup execution runner and endpoints (backups)
 # -------------------------------------------------------------------------------
 
 from __future__ import print_function
@@ -298,7 +298,7 @@ def add_header(r):
     r.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     r.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; "
         "connect-src 'self' https://raw.githubusercontent.com; "
@@ -933,6 +933,114 @@ def clear_script_log_json(log_type):
 
 
 # -------------------------------------------------------------------------------
+# Backup Script Execution Manager
+# -------------------------------------------------------------------------------
+class BackupRunner:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.process = None
+        self.running = False
+        self.script_type = None
+        self.output_lines = []
+        self.exit_code = None
+        self.start_time = None
+
+    def start(self, script_type):
+        with self.lock:
+            if self.running:
+                return False, "A backup script is already running."
+
+            daily_paths = [
+                "/home/genmonpi/backup.sh",
+                "/home/genmonpi/genmon_backup.sh",
+                "/etc/genmon/backup.sh",
+                "./backup.sh",
+            ]
+            sdcard_paths = [
+                "/home/genmonpi/sdcard_backup.sh",
+                "/home/genmonpi/genmon_sdcard_backup.sh",
+                "/etc/genmon/sdcard_backup.sh",
+                "./sdcard_backup.sh",
+            ]
+
+            target_paths = daily_paths if script_type == "daily" else sdcard_paths
+            cmd_path = None
+            for p in target_paths:
+                if os.path.exists(p):
+                    cmd_path = p
+                    break
+
+            if not cmd_path:
+                cmd_path = target_paths[0]
+
+            self.running = True
+            self.script_type = script_type
+            self.output_lines = []
+            self.exit_code = None
+            self.start_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.output_lines.append(f"[{now_str}] [INFO] Starting {script_type.upper()} backup execution ({cmd_path})...\n")
+
+            t = threading.Thread(target=self._run_thread, args=(cmd_path,), daemon=True)
+            t.start()
+            return True, "Backup started."
+
+    def _run_thread(self, cmd_path):
+        try:
+            cmd = ["/bin/bash", cmd_path] if cmd_path.endswith(".sh") else [cmd_path]
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            for line in iter(self.process.stdout.readline, ''):
+                if line:
+                    with self.lock:
+                        self.output_lines.append(line)
+            self.process.wait()
+            with self.lock:
+                self.exit_code = self.process.returncode
+                self.running = False
+                now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                status_str = "SUCCESS" if self.exit_code == 0 else f"FAILED (exit code {self.exit_code})"
+                self.output_lines.append(f"[{now_str}] [INFO] Backup execution finished: {status_str}.\n")
+        except Exception as e:
+            with self.lock:
+                self.running = False
+                self.exit_code = -1
+                now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self.output_lines.append(f"[{now_str}] [ERROR] Failed to execute backup script ({cmd_path}): {e}\n")
+
+    def stop(self):
+        with self.lock:
+            if self.process and self.running:
+                try:
+                    self.process.terminate()
+                    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    self.output_lines.append(f"[{now_str}] [WARN] Termination signal sent by user.\n")
+                    return True, "Stop signal sent."
+                except Exception as e:
+                    return False, str(e)
+            return False, "No running backup script."
+
+    def get_status(self):
+        with self.lock:
+            return {
+                "running": self.running,
+                "script_type": self.script_type,
+                "exit_code": self.exit_code,
+                "start_time": self.start_time,
+                "output": self.output_lines,
+            }
+
+
+backup_runner_instance = BackupRunner()
+
+
+# -------------------------------------------------------------------------------
 def ProcessCommand(command):
 
     if command == "script_logs_json":
@@ -941,6 +1049,22 @@ def ProcessCommand(command):
     if command.startswith("clear_script_log_json"):
         log_type = request.args.get("log", "sync")
         return clear_script_log_json(log_type)
+
+    if command.startswith("run_backup_cmd_json"):
+        if not HasWriteAccess():
+            return json.dumps({"result": "Error", "message": "Read Only Mode"})
+        btype = request.args.get("type", "daily")
+        ok, msg = backup_runner_instance.start(btype)
+        return json.dumps({"result": "OK" if ok else "Error", "message": msg})
+
+    if command == "stop_backup_cmd_json":
+        if not HasWriteAccess():
+            return json.dumps({"result": "Error", "message": "Read Only Mode"})
+        ok, msg = backup_runner_instance.stop()
+        return json.dumps({"result": "OK" if ok else "Error", "message": msg})
+
+    if command == "get_backup_runner_status_json":
+        return json.dumps(backup_runner_instance.get_status())
 
     try:
         command_list = [
@@ -1073,13 +1197,17 @@ def ProcessCommand(command):
                 "support_data_json",
             ]:
 
-                if command in ["start_info_json"]:
+                if command in ["start_info_json", "gui_start_json", "start_json"]:
                     try:
                         StartInfo = json.loads(data)
                         StartInfo["write_access"] = HasWriteAccess()
-                        if not StartInfo["write_access"]:
-                            StartInfo["pages"]["settings"] = False
-                            StartInfo["pages"]["notifications"] = False
+                        if "pages" in StartInfo and isinstance(StartInfo["pages"], dict):
+                            StartInfo["pages"]["scriptlogs"] = True
+                            StartInfo["pages"]["backups"] = True
+                            StartInfo["pages"]["backup_runner"] = True
+                            if not StartInfo["write_access"]:
+                                StartInfo["pages"]["settings"] = False
+                                StartInfo["pages"]["notifications"] = False
                         StartInfo["LoginActive"] = LoginActive()
                         data = json.dumps(StartInfo, sort_keys=False)
                     except Exception as e1:

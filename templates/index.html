@@ -7,31 +7,59 @@
     <meta http-equiv="expires" content="0">
     <meta http-equiv="pragma" content="no-cache">
     <title>Genmon</title>
+    <style>
+        :root {
+            --bg-0: #090e1a;
+            --text-0: #e4eaf4;
+            --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+        [data-theme~="light"] {
+            --bg-0: #f0f2f5;
+            --text-0: #1a1a2e;
+        }
+        html, body {
+            background-color: var(--bg-0) !important;
+            color: var(--text-0) !important;
+            font-family: var(--font) !important;
+            margin: 0;
+            padding: 0;
+            height: 100%;
+        }
+        .app.hidden {
+            display: none !important;
+        }
+        .loader {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: var(--bg-0) !important;
+            color: var(--text-0) !important;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            font-family: var(--font) !important;
+        }
+        .loader-spinner {
+            width: 36px;
+            height: 36px;
+            border: 3px solid rgba(255,255,255,0.15);
+            border-top-color: #4CAF50;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-bottom: 12px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
     <link rel="manifest" href="manifest.webmanifest">
     <meta name="theme-color" content="#090e1a">
     <link rel="icon" href="favicon.ico">
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="preload" href="css/genmon.css" as="style">
-    <link rel="stylesheet" href="css/genmon.css" id="main-css" onload="document.documentElement.classList.add('fouc-ready')">
-    <style>
-        html { visibility: hidden; opacity: 0; }
-        html.fouc-ready { visibility: visible; opacity: 1; transition: opacity 0.2s ease-in; }
-    </style>
-    <script src="js/system-theme.js"></script>
-    <script>
-        (function() {
-            function reveal() { document.documentElement.classList.add('fouc-ready'); }
-            var css = document.getElementById('main-css');
-            if (css && css.sheet) {
-                reveal();
-            } else {
-                window.addEventListener('load', reveal);
-                setTimeout(reveal, 1000);
-            }
-        })();
-    </script>
+    <link rel="preload" href="css/genmon.css?v=999" as="style">
+    <link rel="stylesheet" href="css/genmon.css?v=999">
+    <script src="js/system-theme.js?v=999"></script>
 </head>
 <body>
     <!-- Loading overlay -->
@@ -60,7 +88,19 @@
                 </svg>
                 </a>
             </div>
-            <nav id="nav-menu" class="nav-menu" aria-label="Main navigation"></nav>
+            <nav id="nav-menu" class="nav-menu" aria-label="Main navigation">
+                <a class="nav-item" href="#status" data-page="status"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg><span>Dashboard</span></a>
+                <a class="nav-item" href="#maintenance" data-page="maintenance"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg><span>Maintenance</span></a>
+                <a class="nav-item" href="#outage" data-page="outage"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg><span>Outage</span></a>
+                <a class="nav-item" href="#logs" data-page="logs"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><span>Logs</span></a>
+                <a class="nav-item" href="#monitor" data-page="monitor"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg><span>Monitor</span></a>
+                <a class="nav-item" href="#journal" data-page="journal"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg><span>Service Journal</span></a>
+                <a class="nav-item" href="#scriptlogs" data-page="scriptlogs"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><span>Script Logs</span></a>
+                <a class="nav-item" href="#backups" data-page="backups"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg><span>Run Backups</span></a>
+                <a class="nav-item" href="#settings" data-page="settings"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg><span>Settings</span></a>
+                <a class="nav-item" href="#addons" data-page="addons"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg><span>Add-Ons</span></a>
+                <a class="nav-item" href="#about" data-page="about"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span>About</span></a>
+            </nav>
         </aside>
 
         <!-- Main area -->
@@ -143,16 +183,17 @@
     <script src="js/jquery.qrcode.min.js"></script>
     <script src="js/chart.min.js"></script>
     <script src="js/gauges.js"></script>
-    <script src="js/genmon.js"></script>
-    <script defer src="js/addon-icons.js"></script>
-    <!-- Register SW only in installed PWA mode to avoid stale-cache issues in browsers.
-         In normal browser sessions, unregister any prior SW so users get fresh files. -->
+    <script src="js/genmon.js?v=999"></script>
+    <script defer src="js/addon-icons.js?v=999"></script>
     <script>
-    if('serviceWorker' in navigator){
-      if(window.matchMedia('(display-mode: standalone)').matches || navigator.standalone){
-        navigator.serviceWorker.register('/sw.js');
-      } else {
-        navigator.serviceWorker.getRegistrations().then(function(r){r.forEach(function(s){s.unregister();});});
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function(r) {
+        r.forEach(function(s) { s.unregister(); });
+      });
+      if ('caches' in window) {
+        caches.keys().then(function(keys) {
+          keys.forEach(function(key) { caches.delete(key); });
+        });
       }
     }
     </script>

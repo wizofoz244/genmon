@@ -568,6 +568,7 @@ var NAV_ITEMS = [
   { id:'monitor',       label:'Monitor',         page:'monitor',       icon:'monitor' },
   { id:'journal',       label:'Service Journal', page:'journal',       icon:'journal' },
   { id:'scriptlogs',    label:'Script Logs',     page:'scriptlogs',    icon:'logs' },
+  { id:'backups',       label:'Run Backups',     page:'backups',       icon:'logs' },
   { id:'settings',      label:'Settings',        page:'settings',      icon:'settings' },
   { id:'registers',     label:'Modbus',          page:'registers',     icon:'modbus' },
   { id:'addons',        label:'Add-Ons',         page:'addons',        icon:'addons' },
@@ -579,7 +580,7 @@ var Nav = {
     var showModbus = Store.get('showModbus', true);
     var h = '';
     NAV_ITEMS.forEach(function(n) {
-      if (!pages || pages[n.page] !== false) {
+      if (!pages || pages[n.page] !== false || n.page === 'scriptlogs' || n.page === 'backups') {
         if (n.id === 'registers' && !showModbus) return;
         h += '<a class="nav-item" href="#' + n.id + '" data-page="' + n.id + '">' +
              icon(n.icon) + '<span>' + esc(n.label) + '</span></a>';
@@ -4526,6 +4527,123 @@ var Pages = {
         var el = document.getElementById('sl-content');
         if (el) el.scrollTop = el.scrollHeight;
       }
+    }
+  },
+
+  /* ========== BACKUP RUNNER ========== */
+  backups: {
+    _pollTimer: null,
+    render: function($c) {
+      $c = $c || $('#content');
+      var h = '';
+      h += '<div class="hdr-actions-row"><h2 style="margin:0;">Manual Backup Execution</h2></div>';
+      h += '<p class="text-muted" style="margin-top:4px; margin-bottom:16px;">Trigger manual backup routines and view live execution output in real time.</p>';
+
+      h += '<div class="card p-3 mb-3" style="background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:16px;">';
+      h += '<div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">';
+      h += '<button class="btn btn-primary" id="br-run-daily">▶ Run Daily Backup</button>';
+      h += '<button class="btn btn-outline" id="br-run-sdcard">▶ Run Weekly SD Card Live Backup</button>';
+      h += '<button class="btn btn-outline-danger" id="br-stop" style="display:none;">🛑 Stop Execution</button>';
+      h += '<span id="br-status-badge" style="margin-left:auto; font-weight:600; font-size:0.85rem;"></span>';
+      h += '</div></div>';
+
+      h += '<div style="margin-bottom:8px; font-weight:600; font-size:0.9rem; display:flex; justify-content:space-between; align-items:center;">';
+      h += '<span>Live Execution Console</span>';
+      h += '<button class="btn btn-sm btn-outline" id="br-clear-console" style="font-size:0.75rem;">Clear Console</button>';
+      h += '</div>';
+
+      h += '<pre id="br-console" style="background:#050810; color:#00ff66; border:1px solid var(--border); border-radius:var(--radius); padding:16px; font-family:monospace; font-size:0.85rem; height:450px; overflow-y:auto; white-space:pre-wrap; word-break:break-all; box-shadow:inset 0 2px 8px rgba(0,0,0,0.5);"></pre>';
+
+      $c.html(h);
+
+      var self = Pages.backups;
+
+      $('#br-run-daily').on('click', function() { self._start('daily'); });
+      $('#br-run-sdcard').on('click', function() { self._start('sdcard'); });
+      $('#br-stop').on('click', function() { self._stop(); });
+      $('#br-clear-console').on('click', function() { $('#br-console').text(''); });
+
+      self._startPolling();
+    },
+
+    _start: function(type) {
+      var self = Pages.backups;
+      var label = type === 'daily' ? 'Daily Backup' : 'Weekly SD Card Live Image Backup';
+
+      Modal.confirm('Run Backup', 'Start running the ' + label + ' now?', function() {
+        API.get('run_backup_cmd_json?type=' + type).done(function(res) {
+          if (res && res.result === 'OK') {
+            self._updateStatus();
+          } else {
+            Modal.alert('Error', (res && res.message) || 'Failed to start backup.');
+          }
+        }).fail(function() {
+          Modal.alert('Error', 'Failed to communicate with Genmon server.');
+        });
+      });
+    },
+
+    _stop: function() {
+      var self = Pages.backups;
+      Modal.confirm('Stop Execution', 'Are you sure you want to stop the running backup script?', function() {
+        API.get('stop_backup_cmd_json').done(function(res) {
+          self._updateStatus();
+        });
+      });
+    },
+
+    _startPolling: function() {
+      var self = Pages.backups;
+      if (self._pollTimer) clearInterval(self._pollTimer);
+      self._updateStatus();
+      self._pollTimer = setInterval(function() {
+        if ($('#br-console').length) {
+          self._updateStatus();
+        } else {
+          clearInterval(self._pollTimer);
+        }
+      }, 1000);
+    },
+
+    _updateStatus: function() {
+      API.get('get_backup_runner_status_json').done(function(d) {
+        if (!d) return;
+
+        var $b = $('#br-status-badge');
+        var $c = $('#br-console');
+        var $dailyBtn = $('#br-run-daily');
+        var $sdBtn = $('#br-run-sdcard');
+        var $stopBtn = $('#br-stop');
+
+        if (d.running) {
+          var typeName = d.script_type === 'daily' ? 'Daily Backup' : 'Weekly SD Card Backup';
+          $b.html('<span style="color:#f59e0b;">⏳ Running ' + typeName + '…</span>');
+          $dailyBtn.prop('disabled', true);
+          $sdBtn.prop('disabled', true);
+          $stopBtn.show();
+        } else {
+          $dailyBtn.prop('disabled', false);
+          $sdBtn.prop('disabled', false);
+          $stopBtn.hide();
+
+          if (d.exit_code === 0) {
+            $b.html('<span style="color:var(--green,#4CAF50);">✓ Backup Completed Successfully</span>');
+          } else if (d.exit_code !== null && d.exit_code !== undefined) {
+            $b.html('<span style="color:var(--danger,#f05252);">⚠️ Backup Failed (Exit code ' + d.exit_code + ')</span>');
+          } else {
+            $b.html('<span style="color:var(--text-muted);">Idle</span>');
+          }
+        }
+
+        if (d.output) {
+          var text = d.output.join('');
+          if ($c.text() !== text) {
+            $c.text(text);
+            var el = document.getElementById('br-console');
+            if (el) el.scrollTop = el.scrollHeight;
+          }
+        }
+      });
     }
   },
 
