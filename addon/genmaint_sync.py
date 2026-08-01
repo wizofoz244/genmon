@@ -233,12 +233,13 @@ class GenMaintSync(MySupport):
 
             alarm_log = logs_dict.get("Alarm Log", [])
             run_log = logs_dict.get("Run Log", [])
+            service_log = logs_dict.get("Service Log", [])
 
-            return alarm_log, run_log
+            return alarm_log, run_log, service_log
 
         except Exception as err:
             self.log_error(f"Error fetching logs via RPC: {err}")
-            return None, None
+            return None, None, None
 
     def fetch_live_run_hours(self) -> float:
         """Fetches the current live engine run hours from Genmon RPC.
@@ -405,6 +406,36 @@ class GenMaintSync(MySupport):
 
         return sessions
 
+    @staticmethod
+    def classify_entry_type(desc: str, source_log: str) -> str:
+        """Classifies a log entry into Service Journal entry type.
+
+        Rules:
+        - Alarm Log and Run Log entries -> 'Observation'
+        - Service Log entries:
+          - 'interval reached' / 'due' / 'reached' -> 'Observation'
+          - 'reset' / 'performed' / 'service a/b/c' -> 'Maintenance'
+          - 'battery' / 'inspect' / 'check' -> 'Check'
+
+        Args:
+            desc: Description of the log event.
+            source_log: Originating log ('Alarm Log', 'Run Log', 'Service Log').
+
+        Returns:
+            String representing entry type ('Observation', 'Maintenance', 'Check', 'Repair').
+        """
+        if source_log == "Service Log":
+            desc_lower = desc.lower()
+            if any(k in desc_lower for k in ["reset", "performed", "service a", "service b", "service c"]):
+                return "Maintenance"
+            if any(k in desc_lower for k in ["interval", "reached", "due"]):
+                return "Observation"
+            if any(k in desc_lower for k in ["battery", "inspect", "check"]):
+                return "Check"
+            return "Maintenance" if "reset" in desc_lower else "Observation"
+
+        return "Observation"
+
     def sync_logs(self, recalculate_zero_hours: bool = False) -> int:
         """Executes one log synchronization pass.
 
@@ -414,8 +445,8 @@ class GenMaintSync(MySupport):
         Returns:
             Count of new or updated entries in maintlog.json.
         """
-        alarm_lines, run_lines = self.fetch_controller_logs()
-        if alarm_lines is None and run_lines is None:
+        alarm_lines, run_lines, service_lines = self.fetch_controller_logs()
+        if alarm_lines is None and run_lines is None and service_lines is None:
             self.log_info("Unable to fetch logs from controller. Skipping sync pass.")
             return 0
 
@@ -448,6 +479,12 @@ class GenMaintSync(MySupport):
                     all_candidates.append((res[0], res[1], "Run Log"))
                     parsed_run_lines.append((res[0], res[1]))
 
+        if service_lines:
+            for line in service_lines:
+                res = self.parse_log_line(line)
+                if res:
+                    all_candidates.append((res[0], res[1], "Service Log"))
+
         # Sort chronologically
         all_candidates.sort(key=lambda x: x[0])
         parsed_run_lines.sort(key=lambda x: x[0])
@@ -459,7 +496,7 @@ class GenMaintSync(MySupport):
         # Recalculate 0.0 hour entries if requested
         if recalculate_zero_hours and live_hrs > 0.0:
             for e in existing_maint:
-                if e.get("type") == "Observation" and (e.get("hours") == 0.0 or e.get("hours") is None):
+                if e.get("type") in ("Observation", "Maintenance") and (e.get("hours") == 0.0 or e.get("hours") is None):
                     d_str = e.get("date", "")
                     event_dt = None
                     for fmt in ("%m/%d/%Y %H:%M", "%m/%d/%Y"):
@@ -486,10 +523,11 @@ class GenMaintSync(MySupport):
 
             # Calculate engine run hours
             hrs = self.calculate_entry_run_hours(event_dt, live_hrs, run_sessions)
+            entry_type = self.classify_entry_type(desc, src)
 
             entry = {
                 "date": formatted_date,
-                "type": "Observation",
+                "type": entry_type,
                 "hours": hrs,
                 "comment": desc,
             }

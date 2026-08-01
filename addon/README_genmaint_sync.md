@@ -3,8 +3,11 @@
 `genmaint_sync.py` is an automated synchronization add-on for Genmon. Generator controllers (such as Generac Evolution and Nexus models) store a sliding window of up to 50 historical entries in their internal **Run Log** and **Alarm Log**. 
 
 This add-on monitors the controller via Genmon's RPC socket interface (`generator: logs_json` and `generator: status_json`). When new or updated log events occur on the controller, `genmaint_sync.py` automatically:
-1. Parses and formats the events into Genmon Service Journal entries.
-2. Classifies all alarm and run entries as **`Observation`** types.
+1. Parses and formats events from the **Run Log**, **Alarm Log**, and **Service Log**.
+2. Classifies entries according to type:
+   - Alarm and Run Log events $\rightarrow$ `Observation`
+   - Service Log interval events (e.g. `interval reached`, `due`) $\rightarrow$ `Observation`
+   - Service Log reset/maintenance events (e.g. `Reset Maintenance`, `performed`) $\rightarrow$ `Maintenance`
 3. Calculates or interpolates exact **Engine Run Hours** for each event based on live engine runtime and session durations.
 4. Appends the new entries to `maintlog.json` while maintaining persistent state to prevent duplicate records.
 

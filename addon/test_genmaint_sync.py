@@ -56,6 +56,13 @@ class TestGenMaintSync(unittest.TestCase):
         hrs_before = sync.calculate_entry_run_hours(event_before, live_hrs, run_sessions)
         self.assertEqual(hrs_before, 138.0)
 
+    def test_classify_entry_type(self) -> None:
+        """Tests classification of entry types for Service Log, Alarm Log, and Run Log."""
+        self.assertEqual(GenMaintSync.classify_entry_type("High Temp", "Alarm Log"), "Observation")
+        self.assertEqual(GenMaintSync.classify_entry_type("Running - Utility Loss", "Run Log"), "Observation")
+        self.assertEqual(GenMaintSync.classify_entry_type("Service A maintenance interval reached", "Service Log"), "Observation")
+        self.assertEqual(GenMaintSync.classify_entry_type("Reset Maintenance", "Service Log"), "Maintenance")
+
 
 if __name__ == "__main__":
     unittest.main()
