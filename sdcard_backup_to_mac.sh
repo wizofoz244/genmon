@@ -16,6 +16,52 @@ log() {
     echo "[$timestamp] [$level] $*" | tee -a "$LOG_FILE"
 }
 
+# Emergency Signal Trap & Resource Cleanup
+cleanup() {
+    local rc=$?
+    # Unmount temporary image backup mount points if left behind
+    if mountpoint -q /tmp/img-backup-mnt 2>/dev/null; then
+        sudo umount -l -f /tmp/img-backup-mnt 2>/dev/null
+    fi
+    # Detach any orphan loop devices associated with backup images
+    for dev in $(losetup -a 2>/dev/null | grep "genmon_sdcard" | cut -d: -f1); do
+        sudo losetup -d "$dev" 2>/dev/null
+    done
+    if [ $rc -ne 0 ] && [ $rc -ne 130 ]; then
+        log "WARN" "Cleaned up temporary mounts and loop devices after abnormal exit."
+    fi
+}
+trap cleanup EXIT INT TERM
+
+# Check for required system packages
+check_dependencies() {
+    local missing=()
+    for pkg in kpartx rsync parted bc dosfstools e2fsck; do
+        if ! command -v "$pkg" >/dev/null 2>&1; then
+            missing+=("$pkg")
+        fi
+    done
+
+    if [ ${#missing[@]} -ne 0 ]; then
+        log "WARN" "Missing recommended backup utilities: ${missing[*]}"
+        log "WARN" "Consider installing them: sudo apt-get update && sudo apt-get install -y ${missing[*]}"
+    fi
+}
+
+# Check available disk space on backup target (requires at least 10GB free)
+check_disk_space() {
+    local target="$1"
+    local free_kb
+    free_kb=$(df -P "$target" 2>/dev/null | awk 'NR==2 {print $4}')
+    if [ -n "$free_kb" ]; then
+        local free_gb=$((free_kb / 1048576))
+        log "INFO" "Available disk space on ${target}: ${free_gb} GB."
+        if [ "$free_gb" -lt 10 ]; then
+            log "WARN" "Low disk space on ${target} (${free_gb} GB available)! Recommend at least 10 GB."
+        fi
+    fi
+}
+
 # Check for stale network mount and attempt auto-remount recovery
 check_and_fix_stale_mount() {
     local target="$1"
@@ -56,6 +102,9 @@ fi
 if ! check_and_fix_stale_mount "$TARGET_DIR"; then
     exit 1
 fi
+
+check_dependencies
+check_disk_space "$TARGET_DIR"
 
 # Function to test file integrity of master image (partition table + ext4 filesystem health)
 check_image_integrity() {
