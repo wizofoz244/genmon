@@ -81,6 +81,10 @@ class GenMaintSync(MySupport):
         log_dir = self.config_path if (os.path.isdir(self.config_path) and os.access(self.config_path, os.W_OK)) else "."
         log_file_path = os.path.join(log_dir, "genmaint_sync.log")
         self.log = log or SetupLogger("genmaint_sync", log_file_path)
+        if self.log and self.log.handlers:
+            fmt = logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+            for h in self.log.handlers:
+                h.setFormatter(fmt)
         self.console = console or SetupLogger("genmaint_sync_console", "", stream=True)
 
         self.running = True

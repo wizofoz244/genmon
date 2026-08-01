@@ -4239,7 +4239,10 @@ var Pages = {
       $c = $c || $('#content');
       var h = '';
       h += '<div class="hdr-actions-row"><h2 style="margin:0;">Script & Add-on Logs</h2>';
-      h += '<button class="btn btn-sm btn-outline" id="sl-refresh">' + btnIcon('refresh', 14) + ' Refresh</button></div>';
+      h += '<div style="display:flex; gap:8px;">';
+      h += '<button class="btn btn-sm btn-outline" id="sl-ack">' + btnIcon('check', 14) + ' Acknowledge Errors</button>';
+      h += '<button class="btn btn-sm btn-outline" id="sl-refresh">' + btnIcon('refresh', 14) + ' Refresh</button>';
+      h += '</div></div>';
       h += '<div style="margin-top:12px; margin-bottom:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">';
       h += '<button class="btn btn-sm sl-tab btn-primary" data-tab="sync">Maintenance Sync Log <span id="sl-badge-sync"></span></button>';
       h += '<button class="btn btn-sm sl-tab btn-outline" data-tab="backup">Daily Backup Log <span id="sl-badge-backup"></span></button>';
@@ -4264,7 +4267,26 @@ var Pages = {
       $('#sl-refresh').on('click', function() { self._load(); });
       $('#sl-search').on('input', function() { self._renderTab(); });
 
+      $('#sl-ack').on('click', function() {
+        var tabKey = self._activeTab;
+        var logData = self._getTabLogData(tabKey);
+        var ackTime = new Date().getTime();
+        var lastIdx = logData && logData.lines ? logData.lines.length - 1 : 0;
+        Store.set('sl_ack_time_' + tabKey, ackTime);
+        Store.set('sl_ack_index_' + tabKey, lastIdx);
+        Store._flush();
+        self._renderTab();
+      });
+
       self._load();
+    },
+    _getTabLogData: function(tabKey) {
+      var self = Pages.scriptlogs;
+      if (!self._data) return null;
+      if (tabKey === 'sync') return self._data.sync_log;
+      if (tabKey === 'backup') return self._data.backup_log;
+      if (tabKey === 'sdcard') return self._data.sdcard_backup_log;
+      return null;
     },
     _load: function() {
       var self = Pages.scriptlogs;
@@ -4281,38 +4303,67 @@ var Pages = {
       if (!self._data) return;
 
       var tabKey = self._activeTab;
-      var logData = null;
-      if (tabKey === 'sync') logData = self._data.sync_log;
-      else if (tabKey === 'backup') logData = self._data.backup_log;
-      else if (tabKey === 'sdcard') logData = self._data.sdcard_backup_log;
+      var logData = self._getTabLogData(tabKey);
 
       if (!logData) {
         $('#sl-content').text('No log data available.');
         return;
       }
 
-      function setBadge(tabId, dataObj) {
-        var $b = $('#sl-badge-' + tabId);
-        if (!dataObj) return;
-        if (dataObj.has_error) {
-          $b.html(' <span style="background:var(--danger, #f05252); color:#fff; padding:2px 6px; border-radius:10px; font-size:0.75rem;">ERROR</span>');
-        } else if (dataObj.has_warning) {
-          $b.html(' <span style="background:#f59e0b; color:#fff; padding:2px 6px; border-radius:10px; font-size:0.75rem;">WARN</span>');
+      function evalTabStatus(key, dataObj) {
+        if (!dataObj || !dataObj.lines) return { unackError: false, unackWarn: false };
+        var ackTs = Store.get('sl_ack_time_' + key, 0);
+        var ackIdx = Store.get('sl_ack_index_' + key, -1);
+        var unackError = false;
+        var unackWarn = false;
+
+        dataObj.lines.forEach(function(line, idx) {
+          var lineLower = line.toLowerCase();
+          var isErr = lineLower.indexOf('[error]') !== -1 || lineLower.indexOf('error') !== -1 || lineLower.indexOf('failed') !== -1 || lineLower.indexOf('exception') !== -1;
+          var isWarn = lineLower.indexOf('[warn]') !== -1 || lineLower.indexOf('warning') !== -1;
+
+          if (!isErr && !isWarn) return;
+
+          var tm = line.match(/(?:\[)?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})(?:\])?/);
+          var lineTs = tm ? new Date(tm[1].replace(' ', 'T')).getTime() : null;
+
+          var isAck = false;
+          if (lineTs && ackTs && lineTs <= ackTs) {
+            isAck = true;
+          } else if (!lineTs && idx <= ackIdx) {
+            isAck = true;
+          }
+
+          if (!isAck) {
+            if (isErr) unackError = true;
+            if (isWarn) unackWarn = true;
+          }
+        });
+
+        return { unackError: unackError, unackWarn: unackWarn };
+      }
+
+      ['sync', 'backup', 'sdcard'].forEach(function(key) {
+        var obj = self._getTabLogData(key);
+        var st = evalTabStatus(key, obj);
+        var $b = $('#sl-badge-' + key);
+        if (st.unackError) {
+          $b.html(' <span style="background:var(--danger, #f05252); color:#fff; padding:2px 6px; border-radius:10px; font-size:0.75rem;">NEW ERROR</span>');
+        } else if (st.unackWarn) {
+          $b.html(' <span style="background:#f59e0b; color:#fff; padding:2px 6px; border-radius:10px; font-size:0.75rem;">NEW WARN</span>');
         } else {
           $b.html(' <span style="background:var(--green, #4CAF50); color:#fff; padding:2px 6px; border-radius:10px; font-size:0.75rem;">OK</span>');
         }
-      }
-      setBadge('sync', self._data.sync_log);
-      setBadge('backup', self._data.backup_log);
-      setBadge('sdcard', self._data.sdcard_backup_log);
+      });
 
+      var currentStatus = evalTabStatus(tabKey, logData);
       var bannerHtml = '';
-      if (logData.has_error) {
-        bannerHtml = '<div style="background:rgba(240,82,82,0.15); border:1px solid var(--danger, #f05252); color:var(--danger, #f05252); padding:10px 14px; border-radius:8px; font-weight:600;">⚠️ Errors detected in log! Review highlighted red lines below.</div>';
-      } else if (logData.has_warning) {
-        bannerHtml = '<div style="background:rgba(245,158,11,0.15); border:1px solid #f59e0b; color:#f59e0b; padding:10px 14px; border-radius:8px; font-weight:600;">⚠️ Warnings detected in log. Review highlighted yellow lines below.</div>';
+      if (currentStatus.unackError) {
+        bannerHtml = '<div style="background:rgba(240,82,82,0.15); border:1px solid var(--danger, #f05252); color:var(--danger, #f05252); padding:10px 14px; border-radius:8px; font-weight:600;">⚠️ New errors detected since last acknowledgment! Click "Acknowledge Errors" after reviewing.</div>';
+      } else if (currentStatus.unackWarn) {
+        bannerHtml = '<div style="background:rgba(245,158,11,0.15); border:1px solid #f59e0b; color:#f59e0b; padding:10px 14px; border-radius:8px; font-weight:600;">⚠️ New warnings detected since last acknowledgment.</div>';
       } else {
-        bannerHtml = '<div style="background:rgba(76,175,80,0.15); border:1px solid var(--green, #4CAF50); color:var(--green, #4CAF50); padding:10px 14px; border-radius:8px; font-weight:600;">✓ All log routines operating normally. No errors detected.</div>';
+        bannerHtml = '<div style="background:rgba(76,175,80,0.15); border:1px solid var(--green, #4CAF50); color:var(--green, #4CAF50); padding:10px 14px; border-radius:8px; font-weight:600;">✓ All script log entries acknowledged. No new alerts.</div>';
       }
       $('#sl-status-banner').html(bannerHtml);
       $('#sl-log-path').html('File Path: <code>' + esc(logData.path || '') + '</code>');
@@ -4321,19 +4372,35 @@ var Pages = {
       var lines = logData.lines || [];
       var formattedLines = [];
 
-      lines.forEach(function(line) {
+      var ackTs = Store.get('sl_ack_time_' + tabKey, 0);
+      var ackIdx = Store.get('sl_ack_index_' + tabKey, -1);
+
+      lines.forEach(function(line, idx) {
         if (search && line.toLowerCase().indexOf(search) === -1) return;
 
         var lineLower = line.toLowerCase();
         var isErr = lineLower.indexOf('[error]') !== -1 || lineLower.indexOf('error') !== -1 || lineLower.indexOf('failed') !== -1 || lineLower.indexOf('exception') !== -1;
         var isWarn = lineLower.indexOf('[warn]') !== -1 || lineLower.indexOf('warning') !== -1;
 
+        var tm = line.match(/(?:\[)?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})(?:\])?/);
+        var lineTs = tm ? new Date(tm[1].replace(' ', 'T')).getTime() : null;
+
+        var isAck = false;
+        if (lineTs && ackTs && lineTs <= ackTs) {
+          isAck = true;
+        } else if (!lineTs && idx <= ackIdx) {
+          isAck = true;
+        }
+
         var lineEsc = esc(line);
 
-        if (isErr) {
-          formattedLines.push('<div style="background:rgba(240,82,82,0.2); color:#ff6b6b; padding:2px 4px; border-radius:4px; margin:2px 0; font-weight:600;">' + lineEsc + '</div>');
-        } else if (isWarn) {
-          formattedLines.push('<div style="background:rgba(245,158,11,0.2); color:#fbbf24; padding:2px 4px; border-radius:4px; margin:2px 0; font-weight:600;">' + lineEsc + '</div>');
+        if (isErr && !isAck) {
+          formattedLines.push('<div style="background:rgba(240,82,82,0.25); color:#ff6b6b; padding:2px 6px; border-radius:4px; margin:2px 0; font-weight:600;">' + lineEsc + '</div>');
+        } else if (isWarn && !isAck) {
+          formattedLines.push('<div style="background:rgba(245,158,11,0.25); color:#fbbf24; padding:2px 6px; border-radius:4px; margin:2px 0; font-weight:600;">' + lineEsc + '</div>');
+        } else if (isErr || isWarn) {
+          /* Acknowledged historical error/warning */
+          formattedLines.push('<div style="color:var(--text-muted); opacity:0.85; padding:1px 0;">' + lineEsc + '</div>');
         } else {
           formattedLines.push('<div>' + lineEsc + '</div>');
         }
