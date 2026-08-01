@@ -405,11 +405,14 @@ class GenMaintSync(MySupport):
 
         return sessions
 
-    def sync_logs(self) -> int:
+    def sync_logs(self, recalculate_zero_hours: bool = False) -> int:
         """Executes one log synchronization pass.
 
+        Args:
+            recalculate_zero_hours: If True, updates existing Observation entries with 0.0 hours.
+
         Returns:
-            Count of new entries added to maintlog.json.
+            Count of new or updated entries in maintlog.json.
         """
         alarm_lines, run_lines = self.fetch_controller_logs()
         if alarm_lines is None and run_lines is None:
@@ -451,6 +454,26 @@ class GenMaintSync(MySupport):
 
         run_sessions = self.extract_run_sessions(parsed_run_lines)
 
+        updated_existing_count = 0
+
+        # Recalculate 0.0 hour entries if requested
+        if recalculate_zero_hours and live_hrs > 0.0:
+            for e in existing_maint:
+                if e.get("type") == "Observation" and (e.get("hours") == 0.0 or e.get("hours") is None):
+                    d_str = e.get("date", "")
+                    event_dt = None
+                    for fmt in ("%m/%d/%Y %H:%M", "%m/%d/%Y"):
+                        try:
+                            event_dt = datetime.datetime.strptime(d_str, fmt)
+                            break
+                        except ValueError:
+                            continue
+                    if event_dt and event_dt.year >= 2020:
+                        calc_hrs = self.calculate_entry_run_hours(event_dt, live_hrs, run_sessions)
+                        if calc_hrs != e.get("hours"):
+                            e["hours"] = calc_hrs
+                            updated_existing_count += 1
+
         new_entries: List[Dict[str, Any]] = []
 
         for event_dt, desc, src in all_candidates:
@@ -475,13 +498,17 @@ class GenMaintSync(MySupport):
             existing_keys.add(entry_key)
             processed_state.add(sig_str)
 
-        if not new_entries:
-            self.log_info("No new log entries detected.")
+        if not new_entries and updated_existing_count == 0:
+            self.log_info("No new log entries detected and no 0.0 hour entries needed updating.")
             return 0
 
-        self.log_info(f"Detected {len(new_entries)} new log entries to add to Service Journal.")
-        for e in new_entries:
-            self.log_info(f"  + [{e['date']}] Hours: {e['hours']} | Type: {e['type']} | Comment: {e['comment']}")
+        if new_entries:
+            self.log_info(f"Detected {len(new_entries)} new log entries to add to Service Journal.")
+            for e in new_entries:
+                self.log_info(f"  + [{e['date']}] Hours: {e['hours']} | Type: {e['type']} | Comment: {e['comment']}")
+
+        if updated_existing_count > 0:
+            self.log_info(f"Recalculated engine run hours for {updated_existing_count} existing entries.")
 
         # Append new entries and sort full maintenance log chronologically by date
         combined_maint = existing_maint + new_entries
@@ -499,11 +526,11 @@ class GenMaintSync(MySupport):
 
         if self.save_maintlog(combined_maint):
             self.save_state(processed_state)
-            return len(new_entries)
+            return len(new_entries) + updated_existing_count
 
         return 0
 
-    def run(self) -> None:
+    def run(self, recalculate_hours: bool = False) -> None:
         """Runs the synchronization service loop or one-shot pass."""
         self.log_info(f"Starting GenMaintSync (Host: {self.host}, Port: {self.port}, Interval: {self.poll_interval}s)")
 
@@ -513,11 +540,11 @@ class GenMaintSync(MySupport):
 
         try:
             if self.oneshot:
-                added_count = self.sync_logs()
-                self.log_info(f"One-shot sync complete. Added {added_count} entries.")
+                added_count = self.sync_logs(recalculate_zero_hours=recalculate_hours)
+                self.log_info(f"One-shot sync complete. Processed {added_count} new/updated entries.")
             else:
                 while self.running:
-                    self.sync_logs()
+                    self.sync_logs(recalculate_zero_hours=recalculate_hours)
                     time.sleep(self.poll_interval)
         except KeyboardInterrupt:
             self.log_info("Keyboard interrupt received. Stopping.")
@@ -551,6 +578,9 @@ def main() -> None:
     parser.add_argument(
         "-d", "--dry-run", action="store_true", help="Parse and calculate log entries without modifying files."
     )
+    parser.add_argument(
+        "-r", "--recalculate-hours", action="store_true", help="Recalculate engine run hours for existing 0.0 hour Observation entries."
+    )
 
     args = parser.parse_args()
 
@@ -575,7 +605,7 @@ def main() -> None:
         dry_run=args.dry_run,
     )
 
-    sync_instance.run()
+    sync_instance.run(recalculate_hours=args.recalculate_hours)
 
 
 if __name__ == "__main__":
