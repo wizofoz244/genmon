@@ -102,34 +102,59 @@ The Raspberry Pi backs up data automatically to an SMB network share hosted on a
 
 ### SMB Share Mount Configuration (`/etc/fstab`)
 - **Mac Server IP**: `192.168.128.15`
-- **Share Name**: `pibackup`
+- **Share Name**: `PiBackup`
 - **Mount Point**: `/mnt/pibackup`
-- **Credentials File**: `/etc/wincredentials` (`username=pibackup`, `password=...`)
-- **`/etc/fstab` entry**:
+- **Credentials File**: `/etc/smbcredentials_pibackup`
+  ```text
+  username=YOUR_SMB_USERNAME
+  password=YOUR_SMB_PASSWORD
+  ```
+  Set restrictive permissions: `sudo chmod 600 /etc/smbcredentials_pibackup`
+- **`/etc/fstab` Resilient Entry**:
   ```fstab
-  //192.168.128.15/pibackup /mnt/pibackup cifs credentials=/etc/wincredentials,iocharset=utf8,vers=3.0,nofail,x-systemd.automount 0 0
+  //192.168.128.15/PiBackup /mnt/pibackup cifs credentials=/etc/smbcredentials_pibackup,uid=genmonpi,gid=genmonpi,file_mode=0777,dir_mode=0777,noperm,hard,echo_interval=60,vers=3.0,x-systemd.automount,_netdev 0 0
+  ```
+- **Mount Options Breakdown**:
+  - `uid=genmonpi,gid=genmonpi,file_mode=0777,dir_mode=0777,noperm`: Grants full unprivileged read/write access to user `genmonpi` and `root` without client-side permission blocks.
+  - `hard`: Pauses and retries I/O operations automatically during brief network drops instead of throwing immediate `Input/Output error`.
+  - `echo_interval=60`: Sends SMB keepalive echoes every 60 seconds to prevent Wi-Fi router session timeouts.
+  - `vers=3.0`: Enables SMB 3.0 protocol resilient handles so file writes survive temporary Wi-Fi reconnects.
+- **Reload Command**:
+  ```bash
+  sudo systemctl daemon-reload && sudo mount -a
   ```
 
-### Backup Script 1: Daily Genmon Data Archive (`/home/genmonpi/backup_to_mac.sh`)
-- Uses `genmonmaint.sh` to generate compressed archive `genmon_backup_YYYY-MM-DD_HHMMSS.tar.gz`.
-- Copies archive to `/mnt/pibackup/`.
-- Removes local temporary files automatically (`rm -f`).
-- **Retention Policy**: Deletes backup archives older than 30 days.
+---
+
+### Production Backup Helper Scripts
+
+The repository includes production backup scripts in `/home/genmonpi/genmon/`:
+
+#### 1. Daily Genmon Data Archive (`/home/genmonpi/genmon/backup_to_mac.sh`)
+- Archives configuration files (`/etc/genmon`), database logs (`maintlog.json`), and sync states (`maint_sync_state.json`).
+- **Archive File**: `/mnt/pibackup/daily/genmon_daily_master.tar.gz`
+- **Integrity & Resiliency**: Pre-checks archive header with `tar -tzf`, auto-heals corrupt archives, and executes network retries (`retry_cmd`).
+- **Retention Policy**: Retains 7 daily snapshots (`genmon_daily_YYYY-MM-DD_HHMMSS.tar.gz`).
 - **Log File**: `/home/genmonpi/backup.log`
 - **Cron Schedule**: Daily at 4:00 AM
   ```cron
-  0 4 * * * /home/genmonpi/backup_to_mac.sh
+  0 4 * * * /home/genmonpi/genmon/backup_to_mac.sh
   ```
 
-### Backup Script 2: Weekly Live SD Card Image (`/home/genmonpi/sdcard_backup_to_mac.sh`)
-- Uses the `image-backup` utility (`/usr/local/bin/image-backup` from `RonR-RPi-image-utils`).
-- Installed dependencies: `bc`, `kpartx`, `rsync`, `parted`, `dosfstools`, `e2fsprogs`.
-- Creates live full system image: `/mnt/pibackup/genmon_sdcard_YYYY-MM-DD_HHMMSS.img`.
-- **Retention Policy**: Retains the 4 most recent weekly SD card images.
+#### 2. Weekly Live SD Card Image (`/home/genmonpi/genmon/sdcard_backup_to_mac.sh`)
+- Creates a full live bootable system image: `/mnt/pibackup/genmon_sdcard_master.img`.
+- **Pre-Flight Corruption Health Checks**: MBR partition table inspection and loopback `e2fsck -n` ext4 superblock validation.
+- **Auto-Healing Replacement**: Automatic removal and re-initialization of corrupted/truncated master images.
+- **Stale Mount Auto-Recovery**: Detects stale mounts (`No such device` / `Stale file handle`) and executes lazy unmount (`umount -l -f`) and auto-remount.
+- **Network Hiccup Resiliency**: 3-attempt exponential backoff retry loop (`retry_cmd`).
+- **Non-Interactive Prompt Pipeline**: Automated `printf "${MASTER_IMG}\n\n\ny\n"` for `image-backup`.
+- **Signal Trap Cleanup**: Emergency handler (`trap cleanup EXIT INT TERM`) detaching orphan loop devices and temporary mounts.
+- **Disk Space & Package Audits**: Pre-flight verification of 10+ GB free space and system package dependencies (`kpartx`, `rsync`, `parted`, `bc`, `dosfstools`, `e2fsck`).
+- **Retention Policy**: Retains 4 weekly snapshots (`genmon_sdcard_YYYY-MM-DD_HHMMSS.img`).
 - **Log File**: `/home/genmonpi/sdcard_backup.log`
 - **Cron Schedule**: Weekly on Sunday at 4:00 AM
   ```cron
-  0 4 * * 0 /home/genmonpi/sdcard_backup_to_mac.sh
+  0 4 * * 0 /home/genmonpi/genmon/sdcard_backup_to_mac.sh
   ```
 
 ---
@@ -142,18 +167,30 @@ To prevent **Flash of Unstyled Content (FOUC)** when loading the Genmon web inte
 
 ---
 
-## 6. Web UI Script & Add-on Log Viewer
+## 6. Manual Backup Execution & Live Terminal Console
 
-A dedicated **Script Logs** page in the left navigation sidebar allows real-time inspection of background automated scripts and add-on services:
+A dedicated **Run Backups** page (`#backups`) in the left navigation sidebar allows triggering manual backup routines and viewing real-time terminal output:
+- **Tabbed Interface**:
+  - 📦 **Daily Backup Routine** Tab (`backup_to_mac.sh`)
+  - 💾 **Weekly SD Card Routine** Tab (`sdcard_backup_to_mac.sh`)
+- **Live Execution Console**: High-tech green streaming output window (`#br-console`) with auto-scrolling line updates.
+- **Interactive Controls**: ▶ **Run Backup**, 🛑 **Stop Execution**, and **Clear Console** buttons.
+- **Backend Runner**: Flask `BackupRunner` class executing non-blocking background threads with `subprocess.Popen` line-by-line output streaming.
+
+---
+
+## 7. Web UI Script & Add-on Log Viewer
+
+A dedicated **Script Logs** page (`#scriptlogs`) in the left navigation sidebar allows real-time inspection of background automated scripts and add-on services:
 - **Monitored Logs**:
   - 🔄 **Maintenance Sync Log** (`/etc/genmon/genmaint_sync.log`)
   - 📦 **Daily Backup Log** (`/home/genmonpi/backup.log`)
   - 💾 **Weekly SD Card Log** (`/home/genmonpi/sdcard_backup.log`)
-- **Error & Warning Highlighting**:
-  - Badges on tab buttons (`OK`, `WARN`, `ERROR`).
-  - Status banner at top of log viewer.
-  - Log lines containing errors or failures are highlighted in **Red**, warnings in **Yellow**, and normal info in **Green**.
-  - Built-in search filtering and refresh support.
+- **Interactive Features**:
+  - Status badges on tab buttons (`OK`, `WARN`, `ERROR`).
+  - **× Clear Log** button with safety confirmation modal to truncate logs on disk.
+  - **Acknowledge Errors** button to clear alert badges on the main Dashboard **Script Logs Status** tile.
+  - Built-in search filtering and syntax highlighting (errors in **Red**, warnings in **Yellow**, normal info in **Green**).
 
 ---
 
