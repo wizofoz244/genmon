@@ -134,7 +134,15 @@ The Raspberry Pi backs up data automatically to an SMB network share hosted on a
 
 ---
 
-## 5. GitHub Fork & Git Workflow
+## 5. Web UI Optimization & FOUC Prevention
+
+To prevent **Flash of Unstyled Content (FOUC)** when loading the Genmon web interface (such as a white flash before dark mode loads):
+- **CSS Preloading**: Core stylesheet `css/genmon.css` is preloaded via `<link rel="preload" href="css/genmon.css" as="style">` in template `<head>` sections.
+- **Visibility Transition**: Inline CSS and DOM ready scripts enforce `visibility: hidden; opacity: 0;` until stylesheets and theme initialization complete, fading in smoothly via `.fouc-ready` class.
+
+---
+
+## 6. GitHub Fork & Git Workflow
 
 The project is maintained on a personal GitHub fork: **[`wizofoz244/genmon`](https://github.com/wizofoz244/genmon)**.
 
@@ -166,7 +174,7 @@ The project is maintained on a personal GitHub fork: **[`wizofoz244/genmon`](htt
 
 ---
 
-## 6. Raspberry Pi Systemd Service Deployment
+## 7. Raspberry Pi Systemd Service Deployment
 
 ### System Information
 - **User**: `genmonpi`
