@@ -4531,7 +4531,9 @@ var Pages = {
   },
 
   /* ========== BACKUP RUNNER ========== */
+  /* ========== BACKUP RUNNER ========== */
   backups: {
+    _activeTab: 'daily',
     _pollTimer: null,
     render: function($c) {
       $c = $c || $('#content');
@@ -4539,31 +4541,62 @@ var Pages = {
       h += '<div class="hdr-actions-row"><h2 style="margin:0;">Manual Backup Execution</h2></div>';
       h += '<p class="text-muted" style="margin-top:4px; margin-bottom:16px;">Trigger manual backup routines and view live execution output in real time.</p>';
 
-      h += '<div class="card p-3 mb-3" style="background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:16px;">';
-      h += '<div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">';
-      h += '<button class="btn btn-primary" id="br-run-daily">▶ Run Daily Backup</button>';
-      h += '<button class="btn btn-outline" id="br-run-sdcard">▶ Run Weekly SD Card Live Backup</button>';
-      h += '<button class="btn btn-outline-danger" id="br-stop" style="display:none;">🛑 Stop Execution</button>';
-      h += '<span id="br-status-badge" style="margin-left:auto; font-weight:600; font-size:0.85rem;"></span>';
-      h += '</div></div>';
-
-      h += '<div style="margin-bottom:8px; font-weight:600; font-size:0.9rem; display:flex; justify-content:space-between; align-items:center;">';
-      h += '<span>Live Execution Console</span>';
-      h += '<button class="btn btn-sm btn-outline" id="br-clear-console" style="font-size:0.75rem;">Clear Console</button>';
+      h += '<div style="margin-bottom:16px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; border-bottom:1px solid var(--border); padding-bottom:12px;">';
+      h += '<button class="btn btn-sm br-tab ' + (this._activeTab === 'daily' ? 'btn-primary' : 'btn-outline') + '" data-tab="daily">Daily Backup Routine</button>';
+      h += '<button class="btn btn-sm br-tab ' + (this._activeTab === 'sdcard' ? 'btn-primary' : 'btn-outline') + '" data-tab="sdcard">Weekly SD Card Routine</button>';
       h += '</div>';
 
-      h += '<pre id="br-console" style="background:#050810; color:#00ff66; border:1px solid var(--border); border-radius:var(--radius); padding:16px; font-family:monospace; font-size:0.85rem; height:450px; overflow-y:auto; white-space:pre-wrap; word-break:break-all; box-shadow:inset 0 2px 8px rgba(0,0,0,0.5);"></pre>';
+      h += '<div id="br-tab-content"></div>';
 
       $c.html(h);
 
       var self = Pages.backups;
 
-      $('#br-run-daily').on('click', function() { self._start('daily'); });
-      $('#br-run-sdcard').on('click', function() { self._start('sdcard'); });
-      $('#br-stop').on('click', function() { self._stop(); });
+      $('.br-tab').on('click', function() {
+        $('.br-tab').removeClass('btn-primary').addClass('btn-outline');
+        $(this).removeClass('btn-outline').addClass('btn-primary');
+        self._activeTab = $(this).data('tab');
+        self._renderTab();
+      });
+
+      self._renderTab();
+      self._startPolling();
+    },
+
+    _renderTab: function() {
+      var self = Pages.backups;
+      var type = self._activeTab;
+      var isDaily = type === 'daily';
+      var title = isDaily ? 'Daily Backup Routine' : 'Weekly SD Card Live Image Backup';
+      var desc = isDaily 
+        ? 'Executes daily backup script (backup_to_mac.sh / backup.sh).' 
+        : 'Executes full weekly live SD card image backup script (sdcard_backup_to_mac.sh / sdcard_backup.sh).';
+      var btnLabel = isDaily ? '▶ Run Daily Backup' : '▶ Run Weekly SD Card Live Backup';
+
+      var h = '';
+      h += '<div class="card p-3 mb-3" style="background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:16px;">';
+      h += '<h3 style="margin:0 0 4px 0; font-size:1.05rem;">' + esc(title) + '</h3>';
+      h += '<p class="text-muted" style="margin:0 0 14px 0; font-size:0.85rem;">' + esc(desc) + '</p>';
+      h += '<div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">';
+      h += '<button class="btn btn-primary" id="br-run-btn">' + esc(btnLabel) + '</button>';
+      h += '<button class="btn btn-outline-danger" id="br-stop-btn" style="display:none;">🛑 Stop Execution</button>';
+      h += '<span id="br-status-badge" style="margin-left:auto; font-weight:600; font-size:0.85rem;"></span>';
+      h += '</div></div>';
+
+      h += '<div style="margin-bottom:8px; font-weight:600; font-size:0.9rem; display:flex; justify-content:space-between; align-items:center;">';
+      h += '<span>Live Execution Console (' + esc(type.toUpperCase()) + ')</span>';
+      h += '<button class="btn btn-sm btn-outline" id="br-clear-console" style="font-size:0.75rem;">Clear Console</button>';
+      h += '</div>';
+
+      h += '<pre id="br-console" style="background:#050810; color:#00ff66; border:1px solid var(--border); border-radius:var(--radius); padding:16px; font-family:monospace; font-size:0.85rem; height:420px; overflow-y:auto; white-space:pre-wrap; word-break:break-all; box-shadow:inset 0 2px 8px rgba(0,0,0,0.5);"></pre>';
+
+      $('#br-tab-content').html(h);
+
+      $('#br-run-btn').on('click', function() { self._start(type); });
+      $('#br-stop-btn').on('click', function() { self._stop(); });
       $('#br-clear-console').on('click', function() { $('#br-console').text(''); });
 
-      self._startPolling();
+      self._updateStatus();
     },
 
     _start: function(type) {
@@ -4611,31 +4644,30 @@ var Pages = {
 
         var $b = $('#br-status-badge');
         var $c = $('#br-console');
-        var $dailyBtn = $('#br-run-daily');
-        var $sdBtn = $('#br-run-sdcard');
-        var $stopBtn = $('#br-stop');
+        var $runBtn = $('#br-run-btn');
+        var $stopBtn = $('#br-stop-btn');
 
         if (d.running) {
           var typeName = d.script_type === 'daily' ? 'Daily Backup' : 'Weekly SD Card Backup';
-          $b.html('<span style="color:#f59e0b;">⏳ Running ' + typeName + '…</span>');
-          $dailyBtn.prop('disabled', true);
-          $sdBtn.prop('disabled', true);
-          $stopBtn.show();
+          if ($b.length) $b.html('<span style="color:#f59e0b;">⏳ Running ' + typeName + '…</span>');
+          if ($runBtn.length) $runBtn.prop('disabled', true);
+          if ($stopBtn.length) $stopBtn.show();
         } else {
-          $dailyBtn.prop('disabled', false);
-          $sdBtn.prop('disabled', false);
-          $stopBtn.hide();
+          if ($runBtn.length) $runBtn.prop('disabled', false);
+          if ($stopBtn.length) $stopBtn.hide();
 
-          if (d.exit_code === 0) {
-            $b.html('<span style="color:var(--green,#4CAF50);">✓ Backup Completed Successfully</span>');
-          } else if (d.exit_code !== null && d.exit_code !== undefined) {
-            $b.html('<span style="color:var(--danger,#f05252);">⚠️ Backup Failed (Exit code ' + d.exit_code + ')</span>');
-          } else {
-            $b.html('<span style="color:var(--text-muted);">Idle</span>');
+          if ($b.length) {
+            if (d.exit_code === 0) {
+              $b.html('<span style="color:var(--green,#4CAF50);">✓ Backup Completed Successfully</span>');
+            } else if (d.exit_code !== null && d.exit_code !== undefined) {
+              $b.html('<span style="color:var(--danger,#f05252);">⚠️ Backup Failed (Exit code ' + d.exit_code + ')</span>');
+            } else {
+              $b.html('<span style="color:var(--text-muted);">Idle</span>');
+            }
           }
         }
 
-        if (d.output) {
+        if (d.output && $c.length) {
           var text = d.output.join('');
           if ($c.text() !== text) {
             $c.text(text);
