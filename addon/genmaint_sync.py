@@ -212,12 +212,22 @@ class GenMaintSync(MySupport):
         try:
             raw_response = self.client.ProcessMonitorCommand("logs_json")
             if not raw_response:
+                self.log_error("Empty response received from RPC logs_json command.")
                 return None, None
 
-            if isinstance(raw_response, str):
-                logs_data = json.loads(raw_response)
-            else:
+            if isinstance(raw_response, dict):
                 logs_data = raw_response
+            else:
+                resp_str = str(raw_response).strip()
+                # Find start and end of JSON payload
+                start_idx = resp_str.find("{")
+                end_idx = resp_str.rfind("}")
+                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                    json_str = resp_str[start_idx : end_idx + 1]
+                    logs_data = json.loads(json_str)
+                else:
+                    self.log_error(f"RPC logs_json output did not contain valid JSON: {resp_str[:100]}")
+                    return None, None
 
             logs_dict = logs_data.get("Logs", {}) if isinstance(logs_data, dict) else {}
 
@@ -242,7 +252,17 @@ class GenMaintSync(MySupport):
         try:
             status_resp = self.client.ProcessMonitorCommand("status_json")
             if status_resp:
-                data = json.loads(status_resp) if isinstance(status_resp, str) else status_resp
+                if isinstance(status_resp, dict):
+                    data = status_resp
+                else:
+                    resp_str = str(status_resp).strip()
+                    start_idx = resp_str.find("{")
+                    end_idx = resp_str.rfind("}")
+                    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                        json_str = resp_str[start_idx : end_idx + 1]
+                        data = json.loads(json_str)
+                    else:
+                        data = {}
                 status_dict = data.get("Status", {}) if isinstance(data, dict) else {}
                 gen_dict = status_dict.get("Generator Status", {})
                 run_hrs_str = gen_dict.get("Total Run Hours", "0.0")
