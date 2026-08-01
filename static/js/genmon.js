@@ -1512,6 +1512,7 @@ var Pages = {
 
       /* Init clock */
       if (!Store.isTileHidden('clock')) self._initClock();
+      if (!Store.isTileHidden('scriptlogs')) self._updateScriptLogsTile();
 
       /* Init weather tile data */
       if (S.weather) {
@@ -2113,6 +2114,8 @@ var Pages = {
         html += '</div>';
 
         $b.html(html);
+      }).fail(function() {
+        $b.html('<div style="font-size:0.8rem;text-align:center;padding:8px 0;color:var(--text-muted);">Genmon service restart needed<br><span style="font-size:0.75rem;color:var(--danger,#f05252);">sudo systemctl restart genmon</span></div>');
       });
     },
 
