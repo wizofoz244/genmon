@@ -177,27 +177,57 @@ if [ -f "$MASTER_IMG" ]; then
     fi
 fi
 
-# Execute Image Backup Routine
-if [ ! -f "$MASTER_IMG" ]; then
-    log "INFO" "No existing valid master image found. Creating a NEW full SD card image..."
-    if [ -x "$BACKUP_UTIL" ]; then
-        log "INFO" "Invoking $BACKUP_UTIL for initial image creation..."
-        printf "${MASTER_IMG}\n\n\ny\n" | "$BACKUP_UTIL" 2>&1 | tee -a "$LOG_FILE"
-    else
-        log "WARN" "$BACKUP_UTIL utility not found. Creating raw live system image fallback..."
-        dd if=/dev/mmcblk0 of="$MASTER_IMG" bs=4M status=progress 2>&1 | tee -a "$LOG_FILE"
-    fi
-else
-    log "INFO" "Performing incremental live backup update to master image..."
-    if [ -x "$BACKUP_UTIL" ]; then
-        log "INFO" "Invoking $BACKUP_UTIL for incremental update..."
-        printf "\n\n\ny\n" | "$BACKUP_UTIL" "$MASTER_IMG" 2>&1 | tee -a "$LOG_FILE"
-    else
-        log "INFO" "Updating backup image via rsync..."
-        rsync -aHAX --delete / "$MASTER_IMG" 2>&1 | tee -a "$LOG_FILE"
-    fi
-fi
+# Execute command with retry loop and exponential backoff for network resiliency
+retry_cmd() {
+    local max_attempts=3
+    local delay=5
+    local attempt=1
+    local rc=0
 
+    while [ $attempt -le $max_attempts ]; do
+        "$@"
+        rc=$?
+        if [ $rc -eq 0 ]; then
+            return 0
+        fi
+
+        log "WARN" "Backup operation failed with exit code $rc (Attempt $attempt/$max_attempts)."
+        if [ $attempt -lt $max_attempts ]; then
+            log "WARN" "Retrying in ${delay} seconds after verifying network mount health..."
+            sleep $delay
+            check_and_fix_stale_mount "$TARGET_DIR"
+            delay=$((delay * 2))
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    return $rc
+}
+
+# Execute Image Backup Routine
+run_backup_step() {
+    if [ ! -f "$MASTER_IMG" ]; then
+        log "INFO" "No existing valid master image found. Creating a NEW full SD card image..."
+        if [ -x "$BACKUP_UTIL" ]; then
+            log "INFO" "Invoking $BACKUP_UTIL for initial image creation..."
+            printf "${MASTER_IMG}\n\n\ny\n" | "$BACKUP_UTIL" 2>&1 | tee -a "$LOG_FILE"
+        else
+            log "WARN" "$BACKUP_UTIL utility not found. Creating raw live system image fallback..."
+            dd if=/dev/mmcblk0 of="$MASTER_IMG" bs=4M status=progress 2>&1 | tee -a "$LOG_FILE"
+        fi
+    else
+        log "INFO" "Performing incremental live backup update to master image..."
+        if [ -x "$BACKUP_UTIL" ]; then
+            log "INFO" "Invoking $BACKUP_UTIL for incremental update..."
+            printf "\n\n\ny\n" | "$BACKUP_UTIL" "$MASTER_IMG" 2>&1 | tee -a "$LOG_FILE"
+        else
+            log "INFO" "Updating backup image via rsync..."
+            rsync -aHAX --timeout=60 --contimeout=30 --delete / "$MASTER_IMG" 2>&1 | tee -a "$LOG_FILE"
+        fi
+    fi
+}
+
+retry_cmd run_backup_step
 RC=$?
 
 # Verify post-execution status

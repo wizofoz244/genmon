@@ -75,16 +75,53 @@ if [ -f "$BACKUP_ARCHIVE" ]; then
     fi
 fi
 
+# Execute command with retry loop and exponential backoff for network resiliency
+retry_cmd() {
+    local max_attempts=3
+    local delay=5
+    local attempt=1
+    local rc=0
+
+    while [ $attempt -le $max_attempts ]; do
+        "$@"
+        rc=$?
+        if [ $rc -eq 0 ]; then
+            return 0
+        fi
+
+        log "WARN" "Daily backup operation failed with exit code $rc (Attempt $attempt/$max_attempts)."
+        if [ $attempt -lt $max_attempts ]; then
+            log "WARN" "Retrying in ${delay} seconds after verifying network mount health..."
+            sleep $delay
+            check_and_fix_stale_mount "$TARGET_DIR"
+            delay=$((delay * 2))
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    return $rc
+}
+
 # Create fresh daily backup archive
 STAGING_TAR="/tmp/genmon_daily_$(date '+%Y-%m-%d_%H%M%S').tar.gz"
 log "INFO" "Creating staging backup archive ($STAGING_TAR)..."
 
 tar -czf "$STAGING_TAR" -C / "$CONF_DIR" "$GENMON_DIR/maintlog.json" "$GENMON_DIR/maint_sync_state.json" 2>> "$LOG_FILE"
 
+sync_daily_backup() {
+    cp "$STAGING_TAR" "$BACKUP_ARCHIVE" 2>> "$LOG_FILE"
+}
+
 if check_archive_integrity "$STAGING_TAR"; then
     log "INFO" "Staging archive integrity verified. Syncing to master backup target..."
-    mv "$STAGING_TAR" "$BACKUP_ARCHIVE"
-    log "INFO" "✓ Daily Genmon Backup completed successfully ($BACKUP_ARCHIVE)."
+    if retry_cmd sync_daily_backup; then
+        rm -f "$STAGING_TAR"
+        log "INFO" "✓ Daily Genmon Backup completed successfully ($BACKUP_ARCHIVE)."
+    else
+        log "ERROR" "Failed to sync daily backup archive to $BACKUP_ARCHIVE!"
+        rm -f "$STAGING_TAR"
+        exit 1
+    fi
 else
     log "ERROR" "Failed to create valid daily backup archive!"
     rm -f "$STAGING_TAR"
