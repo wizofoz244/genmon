@@ -1,0 +1,127 @@
+#!/bin/bash
+# -------------------------------------------------------------------------------
+# Weekly Live SD Card Image Backup Script with Corruption Protection & Auto-Healing
+# -------------------------------------------------------------------------------
+
+LOG_FILE="/home/genmonpi/sdcard_backup.log"
+TARGET_DIR="/mnt/pibackup"
+MASTER_IMG="${TARGET_DIR}/genmon_sdcard_master.img"
+BACKUP_UTIL="/usr/local/bin/image-backup"
+
+# Helper for formatted log messages: [YYYY-MM-DD HH:MM:SS] [LEVEL] Message
+log() {
+    local level="${1:-INFO}"
+    shift
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$timestamp] [$level] $*" | tee -a "$LOG_FILE"
+}
+
+log "INFO" "=================================================="
+log "INFO" "Starting Weekly SD Card Live Image Backup Procedure..."
+
+# Ensure target mount directory exists
+if [ ! -d "$TARGET_DIR" ]; then
+    log "ERROR" "Backup target directory ($TARGET_DIR) is not mounted or does not exist!"
+    exit 1
+fi
+
+# Function to test file integrity of master image
+check_image_integrity() {
+    local img="$1"
+    if [ ! -f "$img" ]; then
+        return 1
+    fi
+
+    # Check minimum file size (must be at least 10MB)
+    local size_bytes=$(stat -c%s "$img" 2>/dev/null || echo "0")
+    if [ "$size_bytes" -lt 10485760 ]; then
+        log "WARN" "Image file $img is too small (${size_bytes} bytes). Marked as corrupt!"
+        return 1
+    fi
+
+    # Verify partition table / header using parted, fdisk, or file command
+    if command -v parted >/dev/null 2>&1; then
+        if ! parted -s "$img" print >/dev/null 2>&1; then
+            log "WARN" "Partition header check failed for $img via parted!"
+            return 1
+        fi
+    elif command -v fdisk >/dev/null 2>&1; then
+        if ! fdisk -l "$img" >/dev/null 2>&1; then
+            log "WARN" "Partition header check failed for $img via fdisk!"
+            return 1
+        fi
+    else
+        if ! file "$img" | grep -qE "DOS/MBR boot sector|partition"; then
+            log "WARN" "File type validation failed for $img!"
+            return 1
+        fi
+    fi
+
+    return 0
+}
+
+# Pre-Check Target Master Image File for Corruption
+if [ -f "$MASTER_IMG" ]; then
+    log "INFO" "Checking health and integrity of master backup image: $MASTER_IMG..."
+    if ! check_image_integrity "$MASTER_IMG"; then
+        log "WARN" "CORRUPTION DETECTED! Master backup image ($MASTER_IMG) is corrupt, truncated, or invalid."
+        log "WARN" "Removing corrupt master image to prevent backup failure..."
+        rm -f "$MASTER_IMG"
+        if [ $? -eq 0 ]; then
+            log "INFO" "Successfully removed corrupt master image. A fresh full SD card image will be created."
+        else
+            log "ERROR" "Failed to remove corrupt master image ($MASTER_IMG). Aborting."
+            exit 1
+        fi
+    else
+        log "INFO" "Master backup image passed integrity pre-check."
+    fi
+fi
+
+# Execute Image Backup Routine
+if [ ! -f "$MASTER_IMG" ]; then
+    log "INFO" "No existing valid master image found. Creating a NEW full SD card image..."
+    if [ -x "$BACKUP_UTIL" ]; then
+        "$BACKUP_UTIL" "$MASTER_IMG" >> "$LOG_FILE" 2>&1
+    else
+        log "WARN" "$BACKUP_UTIL utility not found. Creating raw live system image fallback..."
+        dd if=/dev/mmcblk0 of="$MASTER_IMG" bs=4M status=progress >> "$LOG_FILE" 2>&1
+    fi
+else
+    log "INFO" "Performing incremental live backup update to master image..."
+    if [ -x "$BACKUP_UTIL" ]; then
+        "$BACKUP_UTIL" "$MASTER_IMG" >> "$LOG_FILE" 2>&1
+    else
+        log "INFO" "Updating backup image via rsync..."
+        rsync -aHAX --delete / "$MASTER_IMG" >> "$LOG_FILE" 2>&1
+    fi
+fi
+
+RC=$?
+
+# Verify post-execution status
+if [ $RC -ne 0 ]; then
+    log "ERROR" "Weekly SD Card Backup FAILED with exit code $RC."
+    log "WARN" "Validating image integrity after failure..."
+    if ! check_image_integrity "$MASTER_IMG"; then
+        log "WARN" "Removing incomplete/corrupt image ($MASTER_IMG) so subsequent backup runs can start fresh."
+        rm -f "$MASTER_IMG"
+    fi
+    exit $RC
+fi
+
+# Post-Backup Integrity Audit
+log "INFO" "Validating completed backup image integrity..."
+if check_image_integrity "$MASTER_IMG"; then
+    log "INFO" "✓ Integrity Check Passed: SD Card Backup completed successfully."
+    SNAPSHOT_NAME="${TARGET_DIR}/genmon_sdcard_$(date '+%Y-%m-%d_%H%M%S').img"
+    cp "$MASTER_IMG" "$SNAPSHOT_NAME" 2>/dev/null && log "INFO" "Snapshot created: $SNAPSHOT_NAME"
+    ls -t "${TARGET_DIR}"/genmon_sdcard_*.img 2>/dev/null | tail -n +5 | xargs -r rm -f
+else
+    log "ERROR" "Backup completed but output image failed post-execution integrity check!"
+    rm -f "$MASTER_IMG"
+    exit 1
+fi
+
+log "INFO" "=================================================="
+exit 0
