@@ -210,9 +210,9 @@ class GenMaintSync(MySupport):
             return None, None
 
         try:
-            raw_response = self.client.ProcessMonitorCommand("logs_json")
+            raw_response = self.client.ProcessMonitorCommand("generator: logs_json")
             if not raw_response:
-                self.log_error("Empty response received from RPC logs_json command.")
+                self.log_error("Empty response received from RPC generator: logs_json command.")
                 return None, None
 
             if isinstance(raw_response, dict):
@@ -250,7 +250,7 @@ class GenMaintSync(MySupport):
             return 0.0
 
         try:
-            status_resp = self.client.ProcessMonitorCommand("status_json")
+            status_resp = self.client.ProcessMonitorCommand("generator: status_json")
             if status_resp:
                 if isinstance(status_resp, dict):
                     data = status_resp
