@@ -426,10 +426,10 @@ class GenMaintSync(MySupport):
         """
         if source_log == "Service Log":
             desc_lower = desc.lower()
-            if any(k in desc_lower for k in ["reset", "performed", "service a", "service b", "service c"]):
-                return "Maintenance"
             if any(k in desc_lower for k in ["interval", "reached", "due"]):
                 return "Observation"
+            if any(k in desc_lower for k in ["reset", "performed", "service a", "service b", "service c"]):
+                return "Maintenance"
             if any(k in desc_lower for k in ["battery", "inspect", "check"]):
                 return "Check"
             return "Maintenance" if "reset" in desc_lower else "Observation"
