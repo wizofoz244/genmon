@@ -950,17 +950,26 @@ class BackupRunner:
             if self.running:
                 return False, "A backup script is already running."
 
+            base_dir = os.path.dirname(os.path.abspath(__file__))
             daily_paths = [
+                "/home/genmonpi/genmon/backup_to_mac.sh",
+                "/home/genmonpi/backup_to_mac.sh",
+                "/home/genmonpi/genmon/backup.sh",
                 "/home/genmonpi/backup.sh",
                 "/home/genmonpi/genmon_backup.sh",
                 "/etc/genmon/backup.sh",
-                "./backup.sh",
+                os.path.join(base_dir, "backup_to_mac.sh"),
+                os.path.join(base_dir, "backup.sh"),
             ]
             sdcard_paths = [
+                "/home/genmonpi/genmon/sdcard_backup_to_mac.sh",
                 "/home/genmonpi/sdcard_backup.sh",
+                "/home/genmonpi/genmon/sdcard_backup.sh",
+                "/home/genmonpi/sdcard_backup_to_mac.sh",
                 "/home/genmonpi/genmon_sdcard_backup.sh",
                 "/etc/genmon/sdcard_backup.sh",
-                "./sdcard_backup.sh",
+                os.path.join(base_dir, "sdcard_backup_to_mac.sh"),
+                os.path.join(base_dir, "sdcard_backup.sh"),
             ]
 
             target_paths = daily_paths if script_type == "daily" else sdcard_paths
