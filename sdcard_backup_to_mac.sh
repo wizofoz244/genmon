@@ -25,7 +25,7 @@ if [ ! -d "$TARGET_DIR" ]; then
     exit 1
 fi
 
-# Function to test file integrity of master image
+# Function to test file integrity of master image (partition table + ext4 filesystem health)
 check_image_integrity() {
     local img="$1"
     if [ ! -f "$img" ]; then
@@ -39,7 +39,7 @@ check_image_integrity() {
         return 1
     fi
 
-    # Verify partition table / header using parted, fdisk, or file command
+    # Verify partition table / header using parted or fdisk
     if command -v parted >/dev/null 2>&1; then
         if ! parted -s "$img" print >/dev/null 2>&1; then
             log "WARN" "Partition header check failed for $img via parted!"
@@ -50,10 +50,28 @@ check_image_integrity() {
             log "WARN" "Partition header check failed for $img via fdisk!"
             return 1
         fi
-    else
-        if ! file "$img" | grep -qE "DOS/MBR boot sector|partition"; then
-            log "WARN" "File type validation failed for $img!"
-            return 1
+    fi
+
+    # Verify inner ext4 filesystem integrity (catches bad superblock / corrupted root partition)
+    if command -v losetup >/dev/null 2>&1; then
+        local loop_dev
+        loop_dev=$(losetup -fP --show "$img" 2>/dev/null)
+        if [ -n "$loop_dev" ]; then
+            local p2="${loop_dev}p2"
+            if [ ! -b "$p2" ]; then
+                p2="${loop_dev}2"
+            fi
+
+            if [ -b "$p2" ]; then
+                if command -v e2fsck >/dev/null 2>&1; then
+                    if ! e2fsck -n "$p2" >/dev/null 2>&1; then
+                        log "WARN" "Ext4 superblock/filesystem corruption detected on root partition ($p2)!"
+                        losetup -d "$loop_dev" 2>/dev/null
+                        return 1
+                    fi
+                fi
+            fi
+            losetup -d "$loop_dev" 2>/dev/null
         fi
     fi
 
