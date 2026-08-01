@@ -208,20 +208,21 @@ The project is maintained on a personal GitHub fork: **[`wizofoz244/genmon`](htt
    ```bash
    git add .
    git commit -m "Description of updates"
-   git push origin master
+   git push origin main
    ```
 
 2. **On Raspberry Pi**: Pull updates:
    ```bash
    cd ~/genmon
-   git pull origin master
+   git checkout -b main origin/main 2>/dev/null || git checkout main
+   git pull origin main
    ```
 
 3. **Syncing Upstream Genmon Updates**:
    ```bash
    git fetch upstream
    git merge upstream/master
-   git push origin master
+   git push origin main
    ```
 
 ---
