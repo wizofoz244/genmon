@@ -31,8 +31,9 @@ This document captures the complete architecture, data processing scripts, autom
  |                                                                                   |
  |  +-----------------------------------------------------------------------------+  |
  |  | Cron Automated Tasks                                                        |  |
- |  |  - Daily @ 4:00 AM:  /home/genmonpi/backup_to_mac.sh (Genmon Archive)       |  |
- |  |  - Sunday @ 4:00 AM: /home/genmonpi/sdcard_backup_to_mac.sh (SD Card Image)  |  |
+ |  |  - Every 3 Mins:      /home/genmonpi/genmon/net_watchdog.sh (Network Watchdog) |  |
+ |  |  - Daily @ 4:00 AM:  /home/genmonpi/genmon/backup_to_mac.sh (Genmon Archive)    |  |
+ |  |  - Sunday @ 4:00 AM: /home/genmonpi/genmon/sdcard_backup_to_mac.sh (SD Card) |  |
  |  +-----------------------------------------------------------------------------+  |
  +-----------------------------------------------------------------------------------+
 ```
@@ -335,4 +336,31 @@ Restrict scanning frequencies strictly to 2.4 GHz channels (Channels 1–11 / 24
    ```bash
    sudo wpa_cli -i wlan0 reconfigure
    ```
+
+---
+
+## 10. Automated Network Watchdog & Auto-Reboot (`net_watchdog.sh`)
+
+A production-grade network watchdog script (`/home/genmonpi/genmon/net_watchdog.sh`) automatically recovers lost network connections and safely reboots the Raspberry Pi when connectivity cannot be restored.
+
+### Key Capabilities & Edge Case Protections
+- **Multi-Tiered Escalation**:
+  - **Phase 1**: Attempts soft network stack restart (`nmcli` or `ip link` / `dhcpcd` / `wpa_supplicant`).
+  - **Phase 2**: Detects USB driver lockups (disappearing `wlan0`) and unbinds/rebinds the USB bus controller.
+  - **Phase 3**: Performs a graceful system reboot if connectivity remains down after `MAX_RESET_ATTEMPTS` (default: 2 soft resets over ~6+ minutes).
+- **Access Point Reboot Window**: Gives Wi-Fi access points and mesh routers a ~6-minute grace period to finish booting before triggering a Pi reboot.
+- **Wi-Fi Power Save Disabling**: Automatically executes `iw dev wlan0 set power_save off` to prevent USB Wi-Fi dongles from entering idle sleep mode.
+- **Genmon Journal Protection**: Safely stops `genmon.service` and flushes disk write buffers (`sync`) prior to rebooting to prevent `maintlog.json` corruption.
+- **SD Card Protection**: Limits consecutive reboots to `MAX_CONSECUTIVE_REBOOTS=3` to avoid wear on flash storage if the router is powered off long-term.
+- **Concurrency & Lock Control**: Uses `flock` and command timeouts to prevent overlapping execution from Cron.
+
+### Cron Installation Setup
+```bash
+sudo crontab -e
+```
+Add the following entry to execute the watchdog every 3 minutes:
+```cron
+*/3 * * * * /home/genmonpi/genmon/net_watchdog.sh
+```
+
 
