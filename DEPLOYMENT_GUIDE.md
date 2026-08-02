@@ -187,6 +187,7 @@ A dedicated **Script Logs** page (`#scriptlogs`) in the left navigation sidebar 
   - 🔄 **Maintenance Sync Log** (`/etc/genmon/genmaint_sync.log`)
   - 📦 **Daily Backup Log** (`/home/genmonpi/backup.log`)
   - 💾 **Weekly SD Card Log** (`/home/genmonpi/sdcard_backup.log`)
+  - 📡 **Network Watchdog Log** (`/var/log/net-watchdog.log`)
 - **Interactive Features**:
   - Status badges on tab buttons (`OK`, `WARN`, `ERROR`).
   - **× Clear Log** button with safety confirmation modal to truncate logs on disk.

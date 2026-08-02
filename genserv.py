@@ -871,10 +871,25 @@ def get_script_logs_json():
     if not sd_log:
         sd_log = read_log_file("/home/genmonpi/sdcard_backup.log")
 
+    watchdog_paths = [
+        "/var/log/net-watchdog.log",
+        "/home/genmonpi/net-watchdog.log",
+        "/etc/genmon/net-watchdog.log",
+        "./net-watchdog.log",
+    ]
+    watchdog_log = None
+    for p in watchdog_paths:
+        if os.path.exists(p):
+            watchdog_log = read_log_file(p)
+            break
+    if not watchdog_log:
+        watchdog_log = read_log_file("/var/log/net-watchdog.log")
+
     return {
         "sync_log": sync_log,
         "backup_log": backup_log,
         "sdcard_backup_log": sd_log,
+        "net_watchdog_log": watchdog_log,
     }
 
 
@@ -899,6 +914,12 @@ def clear_script_log_json(log_type):
             "/home/genmonpi/sdcard_backup.log",
             "/etc/genmon/sdcard_backup.log",
             "./sdcard_backup.log",
+        ],
+        "watchdog": [
+            "/var/log/net-watchdog.log",
+            "/home/genmonpi/net-watchdog.log",
+            "/etc/genmon/net-watchdog.log",
+            "./net-watchdog.log",
         ],
     }
 

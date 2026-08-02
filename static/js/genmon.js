@@ -2089,9 +2089,10 @@ var Pages = {
         var syncSt = evalStatus('sync', d.sync_log);
         var backupSt = evalStatus('backup', d.backup_log);
         var sdSt = evalStatus('sdcard', d.sdcard_backup_log);
+        var watchSt = evalStatus('watchdog', d.net_watchdog_log);
 
-        var overallErr = syncSt.hasErr || backupSt.hasErr || sdSt.hasErr;
-        var overallWarn = syncSt.hasWarn || backupSt.hasWarn || sdSt.hasWarn;
+        var overallErr = syncSt.hasErr || backupSt.hasErr || sdSt.hasErr || watchSt.hasErr;
+        var overallWarn = syncSt.hasWarn || backupSt.hasWarn || sdSt.hasWarn || watchSt.hasWarn;
 
         function formatBadge(st) {
           if (st.hasErr) return '<span style="background:var(--danger,#f05252); color:#fff; padding:2px 7px; border-radius:10px; font-weight:600; font-size:0.72rem;">NEW ERROR</span>';
@@ -2112,6 +2113,7 @@ var Pages = {
         html += '<div style="display:flex; justify-content:space-between; align-items:center;"><span>Sync Log:</span> ' + formatBadge(syncSt) + '</div>';
         html += '<div style="display:flex; justify-content:space-between; align-items:center;"><span>Daily Backup:</span> ' + formatBadge(backupSt) + '</div>';
         html += '<div style="display:flex; justify-content:space-between; align-items:center;"><span>SD Card Backup:</span> ' + formatBadge(sdSt) + '</div>';
+        html += '<div style="display:flex; justify-content:space-between; align-items:center;"><span>Network Watchdog:</span> ' + formatBadge(watchSt) + '</div>';
         html += '</div>';
 
         $b.html(html);
@@ -4344,6 +4346,7 @@ var Pages = {
       h += '<button class="btn btn-sm sl-tab btn-primary" data-tab="sync">Maintenance Sync Log <span id="sl-badge-sync"></span></button>';
       h += '<button class="btn btn-sm sl-tab btn-outline" data-tab="backup">Daily Backup Log <span id="sl-badge-backup"></span></button>';
       h += '<button class="btn btn-sm sl-tab btn-outline" data-tab="sdcard">Weekly SD Card Log <span id="sl-badge-sdcard"></span></button>';
+      h += '<button class="btn btn-sm sl-tab btn-outline" data-tab="watchdog">Network Watchdog <span id="sl-badge-watchdog"></span></button>';
       h += '<input type="text" id="sl-search" class="form-control" style="max-width:240px; margin-left:auto;" placeholder="Search log lines…">';
       h += '</div>';
       h += '<div id="sl-status-banner" style="margin-bottom:12px;"></div>';
@@ -4377,7 +4380,7 @@ var Pages = {
 
       $('#sl-clear').on('click', function() {
         var tabKey = self._activeTab;
-        var names = { sync: 'Maintenance Sync Log', backup: 'Daily Backup Log', sdcard: 'Weekly SD Card Log' };
+        var names = { sync: 'Maintenance Sync Log', backup: 'Daily Backup Log', sdcard: 'Weekly SD Card Log', watchdog: 'Network Watchdog Log' };
         var logName = names[tabKey] || 'Log';
 
         Modal.confirm('Clear Log', 'Are you sure you want to clear all entries in the ' + logName + '?', function() {
@@ -4400,6 +4403,7 @@ var Pages = {
       if (tabKey === 'sync') return self._data.sync_log;
       if (tabKey === 'backup') return self._data.backup_log;
       if (tabKey === 'sdcard') return self._data.sdcard_backup_log;
+      if (tabKey === 'watchdog') return self._data.net_watchdog_log;
       return null;
     },
     _load: function() {
@@ -4457,7 +4461,7 @@ var Pages = {
         return { unackError: unackError, unackWarn: unackWarn };
       }
 
-      ['sync', 'backup', 'sdcard'].forEach(function(key) {
+      ['sync', 'backup', 'sdcard', 'watchdog'].forEach(function(key) {
         var obj = self._getTabLogData(key);
         var st = evalTabStatus(key, obj);
         var $b = $('#sl-badge-' + key);
