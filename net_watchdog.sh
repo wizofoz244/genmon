@@ -27,9 +27,12 @@ LOG_FILE="/var/log/net-watchdog.log"
 RESET_COUNT_FILE="/tmp/net_watchdog_reset_count"
 REBOOT_COUNT_FILE="/var/tmp/net_watchdog_reboot_count"
 
-# Helper for log file management
+# Standard log helper: [YYYY-MM-DD HH:MM:SS] [LEVEL] Message
 log_msg() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
+    local level="${1:-INFO}"
+    shift
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$timestamp] [$level] $*" >> "$LOG_FILE"
     if [ -f "$LOG_FILE" ] && [ "$(wc -l < "$LOG_FILE")" -gt "$MAX_LOG_LINES" ]; then
         tail -n "$MAX_LOG_LINES" "$LOG_FILE" > "$LOG_FILE.tmp" && mv "$LOG_FILE.tmp" "$LOG_FILE"
     fi
@@ -62,7 +65,7 @@ fi
 if ping -c 3 -W 5 "$ROUTER_IP" > /dev/null 2>&1; then
     # Connection Healthy: Clear error & reset counters
     if [ -f "$RESET_COUNT_FILE" ] || [ -f "$REBOOT_COUNT_FILE" ]; then
-        log_msg "SUCCESS: Connected to $ROUTER_IP on $INTERFACE. Clearing error states."
+        log_msg "INFO" "Connected to $ROUTER_IP on $INTERFACE. Clearing error states."
         rm -f "$RESET_COUNT_FILE" "$REBOOT_COUNT_FILE"
     fi
     exit 0
@@ -71,7 +74,7 @@ fi
 # 2. Brief Router Reboot / Transient Glitch. Wait 15s and retry ping before acting
 sleep 15
 if ping -c 3 -W 5 "$ROUTER_IP" > /dev/null 2>&1; then
-    log_msg "INFO: Recovered on 2nd ping check (transient glitch/router reboot)."
+    log_msg "INFO" "Recovered on 2nd ping check (transient glitch/router reboot)."
     rm -f "$RESET_COUNT_FILE" "$REBOOT_COUNT_FILE" 2>/dev/null
     exit 0
 fi
@@ -84,11 +87,11 @@ if [ "$RESET_COUNT" -lt "$MAX_RESET_ATTEMPTS" ]; then
     RESET_COUNT=$((RESET_COUNT + 1))
     echo "$RESET_COUNT" > "$RESET_COUNT_FILE"
 
-    log_msg "WARNING: Failed to ping $ROUTER_IP on $INTERFACE (Attempt $RESET_COUNT/$MAX_RESET_ATTEMPTS). Initiating soft network reset..."
+    log_msg "WARN" "Failed to ping $ROUTER_IP on $INTERFACE (Attempt $RESET_COUNT/$MAX_RESET_ATTEMPTS). Initiating soft network reset..."
 
     # If USB Wi-Fi dongle hardware disappeared from OS (/sys/class/net/wlan0 missing)
     if [ ! -d "/sys/class/net/$INTERFACE" ]; then
-        log_msg "WARNING: Interface $INTERFACE disappeared! Attempting USB hub driver rebind..."
+        log_msg "WARN" "Interface $INTERFACE disappeared! Attempting USB hub driver rebind..."
         for usb_dev in /sys/bus/usb/drivers/usb/*-*; do
             if [ -e "$usb_dev" ]; then
                 echo "$(basename "$usb_dev")" > /sys/bus/usb/drivers/usb/unbind 2>/dev/null
@@ -122,16 +125,16 @@ REBOOT_COUNT=$((REBOOT_COUNT + 1))
 echo "$REBOOT_COUNT" > "$REBOOT_COUNT_FILE"
 
 if [ "$REBOOT_COUNT" -gt "$MAX_CONSECUTIVE_REBOOTS" ]; then
-    log_msg "CRITICAL: Router $ROUTER_IP unreachable after $MAX_CONSECUTIVE_REBOOTS reboots. Pausing reboots to protect SD card."
+    log_msg "ERROR" "Router $ROUTER_IP unreachable after $MAX_CONSECUTIVE_REBOOTS reboots. Pausing reboots to protect SD card."
     # Reset soft-reset counter so it cycles network resets instead of endless reboots
     rm -f "$RESET_COUNT_FILE"
     exit 0
 fi
 
-log_msg "CRITICAL: Router $ROUTER_IP unreachable on $INTERFACE after $MAX_RESET_ATTEMPTS resets (~6+ mins). Initiating graceful reboot (Reboot $REBOOT_COUNT/$MAX_CONSECUTIVE_REBOOTS)..."
+log_msg "ERROR" "Router $ROUTER_IP unreachable on $INTERFACE after $MAX_RESET_ATTEMPTS resets (~6+ mins). Initiating graceful reboot (Reboot $REBOOT_COUNT/$MAX_CONSECUTIVE_REBOOTS)..."
 
 # Safely stop Genmon service before rebooting to prevent log file corruption
-log_msg "Stopping Genmon service cleanly..."
+log_msg "INFO" "Stopping Genmon service cleanly..."
 systemctl stop genmon 2>/dev/null || systemctl stop startgenmon 2>/dev/null
 
 # Clean reset count state for fresh boot
