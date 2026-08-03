@@ -274,7 +274,9 @@ def logout():
             session["logged_in"] = False
             session["write_access"] = False
             session["mfa_ok"] = False
-        return redirect(url_for("root"))
+        resp = make_response(redirect(url_for("root")))
+        resp.headers["Clear-Site-Data"] = '"cache", "cookies", "storage"'
+        return resp
     except Exception as e1:
         LogError("Error on logout: " + str(e1))
 
