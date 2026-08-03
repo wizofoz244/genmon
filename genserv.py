@@ -873,6 +873,7 @@ def get_script_logs_json():
 
     watchdog_paths = [
         "/var/log/net-watchdog.log",
+        "/home/genmonpi/genmon/net-watchdog.log",
         "/home/genmonpi/net-watchdog.log",
         "/etc/genmon/net-watchdog.log",
         "./net-watchdog.log",
@@ -917,6 +918,7 @@ def clear_script_log_json(log_type):
         ],
         "watchdog": [
             "/var/log/net-watchdog.log",
+            "/home/genmonpi/genmon/net-watchdog.log",
             "/home/genmonpi/net-watchdog.log",
             "/etc/genmon/net-watchdog.log",
             "./net-watchdog.log",
