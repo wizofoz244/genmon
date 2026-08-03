@@ -14,6 +14,7 @@ import collections
 import errno
 import hashlib
 import json
+import mimetypes
 import os
 import os.path
 import secrets
@@ -23,6 +24,10 @@ import sys
 import threading
 import time
 import uuid
+
+mimetypes.add_type("text/css", ".css")
+mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("image/svg+xml", ".svg")
 
 try:
     from flask import (
@@ -281,10 +286,16 @@ def logout():
 def add_header(r):
     """
     Force cache header and add security headers.
-    Static assets (CSS, JS, images) do not use no-store so Chrome memory cache
-    is not evicted during layout calculations (prevents ERR_TOO_MANY_RETRIES in Incognito).
+    Ensure static assets receive explicit Content-Type headers so X-Content-Type-Options: nosniff
+    never rejects stylesheets or scripts.
     """
-    if request.path.startswith(("/css/", "/js/", "/icons/", "/svg/", "/favicon.ico")):
+    if request.path.endswith(".css") or "/css/" in request.path:
+        r.headers["Content-Type"] = "text/css; charset=utf-8"
+        r.headers["Cache-Control"] = "no-cache, must-revalidate"
+    elif request.path.endswith(".js") or "/js/" in request.path:
+        r.headers["Content-Type"] = "application/javascript; charset=utf-8"
+        r.headers["Cache-Control"] = "no-cache, must-revalidate"
+    elif request.path.startswith(("/icons/", "/svg/", "/favicon.ico")):
         r.headers["Cache-Control"] = "no-cache, must-revalidate"
     else:
         r.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
