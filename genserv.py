@@ -282,9 +282,7 @@ def add_header(r):
     """
     Force cache header and add security headers
     """
-    r.headers[
-        "Cache-Control"
-    ] = "no-cache, no-store, must-revalidate, public, max-age=0"
+    r.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     r.headers["Pragma"] = "no-cache"
     r.headers["Expires"] = "0"
 
