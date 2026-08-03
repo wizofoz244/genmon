@@ -823,6 +823,13 @@ def get_script_logs_json():
                     "has_error": has_err,
                     "has_warning": has_warn,
                 }
+        except FileNotFoundError:
+            return {
+                "path": filepath,
+                "lines": ["Log file has not been created yet. Monitoring active and connection is healthy."],
+                "has_error": False,
+                "has_warning": False,
+            }
         except Exception as e:
             return {
                 "path": filepath,

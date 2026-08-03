@@ -61,6 +61,11 @@ if command -v iw &> /dev/null && [ -d "/sys/class/net/$INTERFACE" ]; then
     iw dev "$INTERFACE" set power_save off 2>/dev/null
 fi
 
+# Initialize log file on first run if it does not exist yet
+if [ ! -f "$LOG_FILE" ]; then
+    log_msg "INFO" "Network Watchdog service initialized on $INTERFACE. Monitoring gateway $ROUTER_IP."
+fi
+
 # 1. Ping Test - Attempt 1
 if ping -c 3 -W 5 "$ROUTER_IP" > /dev/null 2>&1; then
     # Connection Healthy: Clear error & reset counters
