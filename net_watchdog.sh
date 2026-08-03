@@ -33,9 +33,9 @@ else
     LOG_FILE="${SCRIPT_DIR}/net-watchdog.log"
 fi
 
-RESET_COUNT_FILE="/tmp/net_watchdog_reset_count"
-REBOOT_COUNT_FILE="/var/tmp/net_watchdog_reboot_count"
-HEARTBEAT_FILE="/tmp/net_watchdog_last_heartbeat"
+RESET_COUNT_FILE="/tmp/net_watchdog_reset_count_${EUID:-0}"
+REBOOT_COUNT_FILE="/var/tmp/net_watchdog_reboot_count_${EUID:-0}"
+HEARTBEAT_FILE="/tmp/net_watchdog_last_heartbeat_${EUID:-0}"
 HEARTBEAT_INTERVAL=3600             # Write a heartbeat log line every 1 hour (3600s)
 
 # Standard log helper: [YYYY-MM-DD HH:MM:SS] [LEVEL] Message
