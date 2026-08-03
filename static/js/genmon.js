@@ -6968,12 +6968,10 @@ function init() {
       }
       if (data.version) $('#footer-version').text('Genmon ' + data.version);
 
-      /* Show logout button when authentication is active */
-      if (data.LoginActive) {
-        $('#logout-btn').show().on('click', function() {
-          window.location.href = window.location.protocol + '//' + window.location.host + '/logout';
-        });
-      }
+      /* Enable logout & cache purge button for all users */
+      $('#logout-btn').show().off('click').on('click', function() {
+        window.location.href = window.location.protocol + '//' + window.location.host + '/logout';
+      });
 
       /* Fetch metric setting for 24-hour clock display */
       API.get('settings', 8000).done(function(sd){
