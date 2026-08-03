@@ -628,7 +628,13 @@ var Router = {
     delete S.dirty[S.currentPage];
     S.currentPage = page;
     Nav.setActive(page);
-    window.location.hash = '#' + page;
+    if (window.location.hash !== '#' + page) {
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState(null, '', '#' + page);
+      } else {
+        window.location.hash = '#' + page;
+      }
+    }
     $('#customize-btn').toggle(page === 'status').removeClass('edit-active');
     S.editMode = false;
     Pages.render(page);
