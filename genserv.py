@@ -280,9 +280,14 @@ def logout():
 @app.after_request
 def add_header(r):
     """
-    Force cache header and add security headers
+    Force cache header and add security headers.
+    Static assets (CSS, JS, images) do not use no-store so Chrome memory cache
+    is not evicted during layout calculations (prevents ERR_TOO_MANY_RETRIES in Incognito).
     """
-    r.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    if request.path.startswith(("/css/", "/js/", "/icons/", "/svg/", "/favicon.ico")):
+        r.headers["Cache-Control"] = "no-cache, must-revalidate"
+    else:
+        r.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     r.headers["Pragma"] = "no-cache"
     r.headers["Expires"] = "0"
 
