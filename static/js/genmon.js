@@ -86,19 +86,25 @@ var Store = {
   _syncTimer: null,
   _loaded: false,   /* true only after a successful pull — guards against overwriting server data */
 
-  /* Pull prefs from server (synchronous, called once at init) */
-  _pull: function() {
-    try {
-      var raw = $.ajax({url: CFG.baseUrl + 'get_ui_prefs',
-        dataType:'text', async:false, timeout:4000}).responseText;
+  /* Pull prefs from server (asynchronous) */
+  _pull: function(cb) {
+    var self = this;
+    $.ajax({url: CFG.baseUrl + 'get_ui_prefs',
+      dataType:'text', async:true, timeout:4000
+    }).done(function(raw) {
       if (raw && raw.charAt(0) === '{') {
-        var d = JSON.parse(raw);
-        if (d && typeof d === 'object') {
-          if (Object.keys(d).length) this._c = d;
-          this._loaded = true;   /* server responded with valid JSON (even if empty) */
-        }
+        try {
+          var d = JSON.parse(raw);
+          if (d && typeof d === 'object') {
+            if (Object.keys(d).length) self._c = d;
+            self._loaded = true;   /* server responded with valid JSON */
+          }
+        } catch(e) {}
       }
-    } catch(e) { /* server unavailable — _loaded stays false, writes are blocked */ }
+      if (cb) cb();
+    }).fail(function() {
+      if (cb) cb();
+    });
   },
 
   /* Push prefs to server (debounced 2s, fire-and-forget) */
@@ -6946,8 +6952,8 @@ var Pages = {
    ============================================================ */
 function init() {
   Modal.init();
-  Store._pull();
   Theme.init();
+  Store._pull();
 
   /* Flush any pending Store writes when the tab/window closes */
   window.addEventListener('beforeunload', function() { Store._flush(); });
