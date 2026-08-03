@@ -6670,7 +6670,7 @@ var Pages = {
         };
         /* Fetch messages/warnings directly from GitHub (not from genmon) */
         $.ajax({ url: 'https://raw.githubusercontent.com/jgyates/genmon/master/data/messages.json',
-          dataType: 'json', timeout: 8000, cache: false
+          dataType: 'json', timeout: 2000, cache: false
         }).done(function(d) {
           _doUpdate(d || {});
         }).fail(function() {

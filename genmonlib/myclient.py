@@ -140,9 +140,14 @@ class ClientInterface(MyCommon):
         try:
             with self.AccessLock:
                 RetStatus = False
-                while RetStatus == False:
+                retries = 0
+                max_retries = 5
+                while RetStatus == False and retries < max_retries:
                     self.SendCommand(cmd)
                     RetStatus, data = self.Receive()
+                    retries += 1
+                    if RetStatus == False and retries < max_retries:
+                        time.sleep(0.2)
         except Exception as e1:
             self.LogErrorLine("Error in ProcessMonitorCommand:" + str(e1))
         return data
