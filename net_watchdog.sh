@@ -6,10 +6,10 @@
 # Ensure Cron environment has access to all standard system binaries
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-# Prevent overlapping script execution using File Locking
-LOCK_FILE="/tmp/net_watchdog.lock"
-exec 9>"$LOCK_FILE"
-if ! flock -n 9; then
+# Prevent overlapping script execution using user-specific File Locking
+LOCK_FILE="/tmp/net_watchdog_${EUID:-0}.lock"
+exec 9>"$LOCK_FILE" 2>/dev/null || exec 9>"/tmp/net_watchdog.lock" 2>/dev/null
+if ! flock -n 9 2>/dev/null; then
     # Another instance is actively running (e.g., waiting on network reset timeout)
     exit 0
 fi
