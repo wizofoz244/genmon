@@ -313,33 +313,6 @@ def add_header(r):
 
 
 # -------------------------------------------------------------------------------
-@app.route("/css/<path:filename>")
-def serve_css(filename):
-    res = send_from_directory(os.path.join(app.root_path, "static", "css"), filename)
-    res.headers["Content-Type"] = "text/css; charset=utf-8"
-    res.headers["Cache-Control"] = "no-cache, must-revalidate"
-    return res
-
-
-@app.route("/js/<path:filename>")
-def serve_js(filename):
-    res = send_from_directory(os.path.join(app.root_path, "static", "js"), filename)
-    res.headers["Content-Type"] = "application/javascript; charset=utf-8"
-    res.headers["Cache-Control"] = "no-cache, must-revalidate"
-    return res
-
-
-@app.route("/icons/<path:filename>")
-def serve_icons(filename):
-    return send_from_directory(os.path.join(app.root_path, "static", "icons"), filename)
-
-
-@app.route("/svg/<path:filename>")
-def serve_svg(filename):
-    return send_from_directory(os.path.join(app.root_path, "static", "svg"), filename)
-
-
-# -------------------------------------------------------------------------------
 @app.route("/", methods=["GET"])
 def root():
 
