@@ -23,7 +23,16 @@ MAX_LOG_LINES=500
 MAX_RESET_ATTEMPTS=2                # Soft-reset network N times (~6 mins) before rebooting
 MAX_CONSECUTIVE_REBOOTS=3           # Max reboots before pausing to protect SD card
 
-LOG_FILE="/var/log/net-watchdog.log"
+# Determine writable log location (prefers /var/log, falls back to /etc/genmon or script dir)
+if touch /var/log/net-watchdog.log 2>/dev/null; then
+    LOG_FILE="/var/log/net-watchdog.log"
+elif touch /etc/genmon/net-watchdog.log 2>/dev/null; then
+    LOG_FILE="/etc/genmon/net-watchdog.log"
+else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    LOG_FILE="${SCRIPT_DIR}/net-watchdog.log"
+fi
+
 RESET_COUNT_FILE="/tmp/net_watchdog_reset_count"
 REBOOT_COUNT_FILE="/var/tmp/net_watchdog_reboot_count"
 HEARTBEAT_FILE="/tmp/net_watchdog_last_heartbeat"
