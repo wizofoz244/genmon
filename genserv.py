@@ -89,7 +89,7 @@ import datetime
 import re
 
 # -------------------------------------------------------------------------------
-app = Flask(__name__, static_url_path="")
+app = Flask(__name__, static_url_path="/static")
 
 # this allows the flask support to be extended on a per site basis but sill allow for
 # updates via the main github repository. If genservex.py exists, load it
@@ -289,13 +289,13 @@ def add_header(r):
     Ensure static assets receive explicit Content-Type headers so X-Content-Type-Options: nosniff
     never rejects stylesheets or scripts.
     """
-    if request.path.endswith(".css") or "/css/" in request.path:
+    if request.path.endswith(".css") or "/css/" in request.path or "/static/css/" in request.path:
         r.headers["Content-Type"] = "text/css; charset=utf-8"
         r.headers["Cache-Control"] = "no-cache, must-revalidate"
-    elif request.path.endswith(".js") or "/js/" in request.path:
+    elif request.path.endswith(".js") or "/js/" in request.path or "/static/js/" in request.path:
         r.headers["Content-Type"] = "application/javascript; charset=utf-8"
         r.headers["Cache-Control"] = "no-cache, must-revalidate"
-    elif request.path.startswith(("/icons/", "/svg/", "/favicon.ico")):
+    elif request.path.startswith(("/static/", "/icons/", "/svg/", "/favicon.ico")):
         r.headers["Cache-Control"] = "no-cache, must-revalidate"
     else:
         r.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
