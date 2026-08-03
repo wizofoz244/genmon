@@ -166,21 +166,16 @@ def StartHTTPRedirectServer():
                 location = "https://" + host + self.path
             else:
                 location = "https://" + host + ":" + str(target_port) + self.path
-            # Serve an HTML page with JS redirect instead of a raw 302.
-            # Chrome aggressively caches 301/302 redirects for IP addresses,
-            # making it impossible to reach the HTTP site after HTTPS is disabled.
-            # An HTML page is not cached as a redirect by the browser.
-            self.send_response(200)
+            # Use HTTP 307 Temporary Redirect so browsers follow the redirect for sub-resources
+            # (CSS, JS, images) without caching permanent IP redirects or failing with ERR_TOO_MANY_RETRIES.
+            self.send_response(307)
+            self.send_header("Location", location)
             self.send_header("Content-Type", "text/html")
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.end_headers()
             page = (
-                "<!DOCTYPE html><html><head>"
-                '<meta http-equiv="refresh" content="1;url={loc}">'
-                "</head><body>"
-                '<p>Redirecting to <a href="{loc}">{loc}</a>&hellip;</p>'
-                "<script>location.replace('{loc}');</script>"
-                "</body></html>"
+                "<!DOCTYPE html><html><head><title>Redirecting</title>"
+                '</head><body><p>Redirecting to <a href="{loc}">{loc}</a>&hellip;</p></body></html>'
             ).format(loc=location)
             self.wfile.write(page.encode("utf-8"))
 
