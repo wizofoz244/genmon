@@ -89,6 +89,7 @@ The top section of `net_watchdog.sh` contains user-configurable parameters:
 | `FALLBACK_ROUTER_IP` | `"192.168.1.1"` | Static IP address of your router/gateway to ping if auto-detection fails. |
 | `INTERFACE_FALLBACK` | `"wlan0"` | Fallback network interface name (`wlan0`, `eth0`, `end0`, `wlan1`). |
 | `MAX_LOG_LINES` | `500` | Maximum line count for `/var/log/net-watchdog.log` before auto-trimming. |
+| `HEARTBEAT_INTERVAL` | `3600` | Time in seconds (default: 1 hour) between healthy periodic heartbeat log entries. |
 | `MAX_RESET_ATTEMPTS` | `2` | Number of soft network resets to attempt before triggering a reboot (~6 min window). |
 | `MAX_CONSECUTIVE_REBOOTS` | `3` | Maximum consecutive system reboots allowed before pausing to protect SD card. |
 

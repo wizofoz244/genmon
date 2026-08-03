@@ -26,6 +26,8 @@ MAX_CONSECUTIVE_REBOOTS=3           # Max reboots before pausing to protect SD c
 LOG_FILE="/var/log/net-watchdog.log"
 RESET_COUNT_FILE="/tmp/net_watchdog_reset_count"
 REBOOT_COUNT_FILE="/var/tmp/net_watchdog_reboot_count"
+HEARTBEAT_FILE="/tmp/net_watchdog_last_heartbeat"
+HEARTBEAT_INTERVAL=3600             # Write a heartbeat log line every 1 hour (3600s)
 
 # Standard log helper: [YYYY-MM-DD HH:MM:SS] [LEVEL] Message
 log_msg() {
@@ -62,16 +64,25 @@ if command -v iw &> /dev/null && [ -d "/sys/class/net/$INTERFACE" ]; then
 fi
 
 # Initialize log file on first run if it does not exist yet
+NOW=$(date +%s)
 if [ ! -f "$LOG_FILE" ]; then
     log_msg "INFO" "Network Watchdog service initialized on $INTERFACE. Monitoring gateway $ROUTER_IP."
+    echo "$NOW" > "$HEARTBEAT_FILE"
 fi
+
+LAST_HEARTBEAT=$(cat "$HEARTBEAT_FILE" 2>/dev/null || echo 0)
+TIME_DIFF=$((NOW - LAST_HEARTBEAT))
 
 # 1. Ping Test - Attempt 1
 if ping -c 3 -W 5 "$ROUTER_IP" > /dev/null 2>&1; then
-    # Connection Healthy: Clear error & reset counters
+    # Connection Healthy: Clear error states & emit hourly heartbeat
     if [ -f "$RESET_COUNT_FILE" ] || [ -f "$REBOOT_COUNT_FILE" ]; then
         log_msg "INFO" "Connected to $ROUTER_IP on $INTERFACE. Clearing error states."
         rm -f "$RESET_COUNT_FILE" "$REBOOT_COUNT_FILE"
+        echo "$NOW" > "$HEARTBEAT_FILE"
+    elif [ "$TIME_DIFF" -ge "$HEARTBEAT_INTERVAL" ]; then
+        log_msg "INFO" "Heartbeat: Watchdog active. Connection to $ROUTER_IP on $INTERFACE is healthy."
+        echo "$NOW" > "$HEARTBEAT_FILE"
     fi
     exit 0
 fi
