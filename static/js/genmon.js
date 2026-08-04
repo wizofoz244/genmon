@@ -6085,10 +6085,10 @@ var Pages = {
       /* 2. External SVG file  (drop {key}.svg into static/svg/) */
       /* 3. External PNG file  (drop {key}.png into static/images/) */
       /* On error, cascade: SVG → PNG → embedded genmon gear fallback */
-      return '<img class="adn-icon" src="svg/' + encodeURIComponent(name) + '.svg" onerror="'
+      return '<img class="adn-icon" src="/static/svg/' + encodeURIComponent(name) + '.svg" onerror="'
         + "this.onerror=function(){this.replaceWith(document.createRange().createContextualFragment("
         + "'<svg class=adn-icon><use href=#adn-genmon></use></svg>'))};" 
-        + 'this.src="images/' + encodeURIComponent(name) + '.png"' + '">';
+        + 'this.src="/static/images/' + encodeURIComponent(name) + '.png"' + '">';
     },
     render: function($c) {
       var h = '<div class="page-title">'+icon('addons')+' Add-Ons</div>';
