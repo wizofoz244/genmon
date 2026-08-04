@@ -1385,7 +1385,7 @@ var Pages = {
     TILE_SIZES: ['sm','md','lg'],
     FONT_SIZES: ['sm','md','lg'],
     render: function($c) {
-      var info = S.startInfo, tiles = info.tiles || [];
+      var info = S.startInfo || {}, tiles = info.tiles || [];
       var pg = info.pages || {};
       var infoTiles = Pages.status.INFO_TILES.filter(function(t) {
         if (t.isLogs && pg.logs === false) return false;
