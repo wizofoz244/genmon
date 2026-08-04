@@ -269,13 +269,10 @@ def csrf_check():
 @app.route("/logout")
 def logout():
     try:
-        # remove the session data
-        if LoginActive():
-            session["logged_in"] = False
-            session["write_access"] = False
-            session["mfa_ok"] = False
+        # Clear all Flask session data
+        session.clear()
         resp = make_response(redirect(url_for("root")))
-        resp.headers["Clear-Site-Data"] = '"cookies", "storage"'
+        resp.set_cookie("session", "", expires=0)
         return resp
     except Exception as e1:
         LogError("Error on logout: " + str(e1))
