@@ -280,9 +280,13 @@ var API = {
     return $.ajax({
       url: CFG.baseUrl + cmd, dataType: 'json',
       timeout: timeout || CFG.ajaxTimeout, cache: false
-    }).done(function() {
+    }).done(function(data) {
       API._errs = 0;
       if (!S.connected) { S.connected = true; UI.connBadge(); }
+      if (typeof data === 'string' && (data.indexOf('<form') >= 0 || data.indexOf('<!DOCTYPE') >= 0)) {
+        window.location.href = '/';
+        return;
+      }
     }).fail(function(xhr) {
       API._errs++;
       // Detect auth redirect
@@ -6970,7 +6974,11 @@ function init() {
 
   API.get('start_info_json', 10000)
     .done(function(data) {
-      if (!data || data === 'Retry' || (typeof data === 'string' && data.indexOf('Retry') >= 0)) {
+      if (!data || data === 'Retry' || (typeof data === 'string' && (data.indexOf('Retry') >= 0 || data.indexOf('<form') >= 0 || data.indexOf('<!DOCTYPE') >= 0))) {
+        if (typeof data === 'string' && (data.indexOf('<form') >= 0 || data.indexOf('<!DOCTYPE') >= 0)) {
+          window.location.href = '/';
+          return;
+        }
         $('.loader-text').text('Initializing generator connection\u2026');
         setTimeout(init, 1500);
         return;
