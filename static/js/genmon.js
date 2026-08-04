@@ -645,8 +645,8 @@ var Router = {
     $c.addClass('page-enter');
     Poll.setPage(page);
   },
-  go: function(page) {
-    if (S.currentPage === page) return;
+  go: function(page, force) {
+    if (!force && S.currentPage === page) return;
     if (S.dirty[S.currentPage]) {
       var prev = S.currentPage;
       Modal.confirm('Unsaved Changes',
@@ -662,8 +662,8 @@ var Router = {
     var h = window.location.hash.replace('#','') || 'status';
     if (h === 'advanced') h = 'settings'; /* advanced merged into settings */
     var valid = NAV_ITEMS.some(function(n){return n.id===h;});
-    Router.go(valid ? h : 'status');
-    $(window).on('hashchange', function() {
+    Router.go(valid ? h : 'status', true);
+    $(window).off('hashchange.router').on('hashchange.router', function() {
       var p = window.location.hash.replace('#','') || 'status';
       if (p !== S.currentPage) Router.go(p);
     });
