@@ -98,7 +98,8 @@ if os.path.isfile(
 ):
     import genservext
 
-app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 300
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 HTTPAuthUser = None
 HTTPAuthPass = None
@@ -324,15 +325,17 @@ def add_header(r):
 
 
 # -------------------------------------------------------------------------------
+@app.route("/genmon.css")
 @app.route("/css/<path:filename>")
 @app.route("/static/css/<path:filename>")
-def serve_css(filename):
+def serve_css(filename="genmon.css"):
     return send_from_directory(os.path.join(app.root_path, "static", "css"), filename, mimetype="text/css")
 
 
+@app.route("/genmon.js")
 @app.route("/js/<path:filename>")
 @app.route("/static/js/<path:filename>")
-def serve_js(filename):
+def serve_js(filename="genmon.js"):
     return send_from_directory(os.path.join(app.root_path, "static", "js"), filename, mimetype="application/javascript")
 
 
