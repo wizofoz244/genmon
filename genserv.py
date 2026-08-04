@@ -309,11 +309,11 @@ def add_header(r):
     r.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     r.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     r.headers["Content-Security-Policy"] = (
-        "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-        "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; "
-        "connect-src 'self' https://raw.githubusercontent.com; "
+        "default-src 'self' https: http: data: blob:; "
+        "script-src 'self' https: http: 'unsafe-inline' 'unsafe-eval'; "
+        "style-src 'self' https: http: 'unsafe-inline'; "
+        "img-src 'self' https: http: data: blob:; "
+        "connect-src 'self' https: http: https://raw.githubusercontent.com; "
         "frame-ancestors 'none'"
     )
 
