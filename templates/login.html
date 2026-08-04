@@ -5,8 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Genmon &mdash; Login</title>
   <style>
-    html { visibility: hidden; opacity: 0; }
-    html.fouc-ready { visibility: visible; opacity: 1; transition: opacity 0.15s ease-in; }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
       --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -63,15 +61,7 @@
     .btn-passkey:hover { background:var(--input-bg); border-color:var(--accent); }
     .btn-passkey svg { width:20px; height:20px; fill:currentColor; }
     .passkey-error { text-align:center; color:#f05252; font-size:.85rem; margin-top:.5rem; }
-  </style>
-  <script src="js/system-theme.js"></script>
-  <script>
-    (function() {
-      function reveal() { document.documentElement.classList.add('fouc-ready'); }
-      if (document.readyState === 'complete') { reveal(); }
-      else { window.addEventListener('load', reveal); setTimeout(reveal, 500); }
-    })();
-  </script>
+  <script src="/static/js/system-theme.js?v=2026.1"></script>
 </head>
 <body>
 {% block body %}
