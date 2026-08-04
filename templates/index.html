@@ -69,7 +69,11 @@
     <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    {% if inline_css %}
+    <style>{{ inline_css|safe }}</style>
+    {% else %}
     <link rel="stylesheet" type="text/css" href="/static/css/genmon.css?v=2026.1">
+    {% endif %}
     <script src="/static/js/system-theme.js?v=2026.1"></script>
 </head>
 <body>

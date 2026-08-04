@@ -101,6 +101,19 @@ if os.path.isfile(
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
+
+@app.context_processor
+def inject_css():
+    """Inject inline CSS to eliminate parallel SSL socket preloader collisions."""
+    try:
+        css_path = os.path.join(app.root_path, "static", "css", "genmon.css")
+        if os.path.isfile(css_path):
+            with open(css_path, "r", encoding="utf-8") as f:
+                return {"inline_css": f.read()}
+    except Exception as e:
+        LogError("Error reading inline css: " + str(e))
+    return {"inline_css": ""}
+
 HTTPAuthUser = None
 HTTPAuthPass = None
 HTTPAuthUser_RO = None
