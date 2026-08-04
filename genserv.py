@@ -324,6 +324,31 @@ def add_header(r):
 
 
 # -------------------------------------------------------------------------------
+@app.route("/css/<path:filename>")
+@app.route("/static/css/<path:filename>")
+def serve_css(filename):
+    return send_from_directory(os.path.join(app.root_path, "static", "css"), filename, mimetype="text/css")
+
+
+@app.route("/js/<path:filename>")
+@app.route("/static/js/<path:filename>")
+def serve_js(filename):
+    return send_from_directory(os.path.join(app.root_path, "static", "js"), filename, mimetype="application/javascript")
+
+
+@app.route("/icons/<path:filename>")
+@app.route("/static/icons/<path:filename>")
+def serve_icons(filename):
+    return send_from_directory(os.path.join(app.root_path, "static", "icons"), filename)
+
+
+@app.route("/svg/<path:filename>")
+@app.route("/static/svg/<path:filename>")
+def serve_svg(filename):
+    return send_from_directory(os.path.join(app.root_path, "static", "svg"), filename)
+
+
+# -------------------------------------------------------------------------------
 @app.route("/", methods=["GET"])
 def root():
 
