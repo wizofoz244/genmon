@@ -6970,7 +6970,11 @@ function init() {
 
   API.get('start_info_json', 10000)
     .done(function(data) {
-      if (!data) { Modal.alert('Error','Failed to load generator info.'); return; }
+      if (!data || data === 'Retry' || (typeof data === 'string' && data.indexOf('Retry') >= 0)) {
+        $('.loader-text').text('Initializing generator connection\u2026');
+        setTimeout(init, 1500);
+        return;
+      }
       S.startInfo   = data;
       S.writeAccess = data.write_access !== false;
 
@@ -7003,8 +7007,8 @@ function init() {
       }
     })
     .fail(function() {
-      $('.loader-text').text('Connection failed. Retrying\u2026');
-      setTimeout(init, 5000);
+      $('.loader-text').text('Connecting\u2026');
+      setTimeout(init, 1500);
     });
 }
 
