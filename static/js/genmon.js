@@ -720,10 +720,8 @@ var Poll = {
       UI.statusBadge(S.baseStatus);
       $('#monitor-time').text(d.MonitorTime || '');
       UI.updatePill();
-      /* Fetch canonical base status for consistent color mapping */
-      API.get('getbase').done(function(gb) {
-        if (gb) S.getBase = String(gb).replace(/"/g, '').trim().toUpperCase();
-      });
+      /* Canonical base status for consistent color mapping */
+      if (d.basestatus) S.getBase = String(d.basestatus).replace(/"/g, '').trim().toUpperCase();
       /* --- Alert bar: system health + unsent feedback --- */
       if (d.SystemHealth && d.SystemHealth !== 'OK') {
         var hl = /thread|dead|log file/i.test(d.SystemHealth) ? 'error' : 'warn';
