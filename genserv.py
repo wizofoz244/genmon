@@ -292,11 +292,14 @@ def add_header(r):
     if request.path.endswith(".css") or "/css/" in request.path or "/static/css/" in request.path:
         r.headers["Content-Type"] = "text/css; charset=utf-8"
         r.headers["Cache-Control"] = "no-cache, must-revalidate"
+        r.headers["Access-Control-Allow-Origin"] = "*"
     elif request.path.endswith(".js") or "/js/" in request.path or "/static/js/" in request.path:
         r.headers["Content-Type"] = "application/javascript; charset=utf-8"
         r.headers["Cache-Control"] = "no-cache, must-revalidate"
+        r.headers["Access-Control-Allow-Origin"] = "*"
     elif request.path.startswith(("/static/", "/icons/", "/svg/", "/favicon.ico")):
         r.headers["Cache-Control"] = "no-cache, must-revalidate"
+        r.headers["Access-Control-Allow-Origin"] = "*"
     else:
         r.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         r.headers["Pragma"] = "no-cache"
