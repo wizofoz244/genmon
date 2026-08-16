@@ -17,7 +17,7 @@ fi
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
-FALLBACK_ROUTER_IP="192.168.1.1"   # Set your router's static IP fallback here
+FALLBACK_ROUTER_IP="192.168.128.1" # Set your router's static IP fallback here
 INTERFACE_FALLBACK="wlan0"           # USB Wi-Fi adapter (wlan0)
 MAX_LOG_LINES=500
 MAX_RESET_ATTEMPTS=2                # Soft-reset network N times (~6 mins) before rebooting
@@ -53,18 +53,23 @@ log_msg() {
 DETECTED_IP=$(ip route show default 2>/dev/null | awk '/default/ {print $3}' | head -n 1)
 DETECTED_IF=$(ip route show default 2>/dev/null | awk '/default/ {print $5}' | head -n 1)
 
-# Validate IP format using regex
 IP_REGEX="^([0-9]{1,3}\.){3}[0-9]{1,3}$"
-if [[ "$DETECTED_IP" =~ $IP_REGEX ]]; then
-    ROUTER_IP="$DETECTED_IP"
-else
-    ROUTER_IP="$FALLBACK_ROUTER_IP"
-fi
-
 if [ -n "$DETECTED_IF" ]; then
     INTERFACE="$DETECTED_IF"
 else
     INTERFACE="$INTERFACE_FALLBACK"
+fi
+
+if [[ "$DETECTED_IP" =~ $IP_REGEX ]]; then
+    ROUTER_IP="$DETECTED_IP"
+else
+    # Auto-derive subnet gateway from active interface IP (e.g., 192.168.128.13 -> 192.168.128.1)
+    IF_IP=$(ip -4 addr show "$INTERFACE" 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -n 1)
+    if [[ "$IF_IP" =~ $IP_REGEX ]]; then
+        ROUTER_IP="$(echo "$IF_IP" | cut -d. -f1-3).1"
+    else
+        ROUTER_IP="$FALLBACK_ROUTER_IP"
+    fi
 fi
 
 # Disable Wi-Fi Power Saving (Prevents USB Wi-Fi sleeping when idle)
@@ -89,6 +94,10 @@ if ping -c 3 -W 5 "$ROUTER_IP" > /dev/null 2>&1; then
         log_msg "INFO" "Connected to $ROUTER_IP on $INTERFACE. Clearing error states."
         rm -f "$RESET_COUNT_FILE" "$REBOOT_COUNT_FILE"
         echo "$NOW" > "$HEARTBEAT_FILE"
+        # Refresh Raspberry Pi Connect service on network recovery
+        if command -v rpi-connect &>/dev/null; then
+            rpi-connect restart >/dev/null 2>&1 || systemctl --user restart rpi-connect >/dev/null 2>&1
+        fi
     elif [ "$TIME_DIFF" -ge "$HEARTBEAT_INTERVAL" ]; then
         log_msg "INFO" "Heartbeat: Watchdog active. Connection to $ROUTER_IP on $INTERFACE is healthy."
         echo "$NOW" > "$HEARTBEAT_FILE"
