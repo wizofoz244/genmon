@@ -1010,6 +1010,7 @@ input, select, textarea { font: inherit; color: inherit; }
 .wifi-arc-on  { opacity: 1; }
 .wifi-pct { font-size: 1.3rem; font-weight: 700; line-height: 1.1; }
 .wifi-dbm { font-size: .65rem; color: var(--text-2); margin-bottom: 2px; }
+.wifi-band { font-size: .75rem; font-weight: 600; color: var(--text-2); margin-top: 1px; }
 
 /* --- Tile edit controls (visible in edit mode) --- */
 .tile-edit-controls {

@@ -2758,6 +2758,7 @@ class GeneratorController(MySupport):
                         type=type,
                         callback=self.Platform.GetWiFiSignalStrength,
                         callbackparameters=(True,False,self.bWifiIsPercent),
+                        extra_callback=self.Platform.GetWiFiBand,
                     )
                     self.TileList.append(Tile)
 

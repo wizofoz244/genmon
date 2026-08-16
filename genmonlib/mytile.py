@@ -37,6 +37,8 @@ class MyTile(MyCommon):
         colors=None,
         defaultsize=None,
         values=None,
+        extra_callback=None,
+        extra_callbackparameters=None,
     ):
 
         self.log = log
@@ -50,6 +52,8 @@ class MyTile(MyCommon):
         self.SubDivisions = subdivisions
         self.Callback = callback
         self.CallbackParameters = callbackparameters
+        self.ExtraCallback = extra_callback
+        self.ExtraCallbackParameters = extra_callbackparameters
         self.Labels = labels
         self.ColorZones = colors
         self.TileType = "gauge"
@@ -548,6 +552,19 @@ class MyTile(MyCommon):
             GUIInfo["title"] = self.Title
             GUIInfo["type"] = self.TileType
             GUIInfo["subtype"] = self.Type
+
+            if self.ExtraCallback is not None:
+                try:
+                    if self.ExtraCallbackParameters is not None:
+                        extra_val = self.ExtraCallback(*self.ExtraCallbackParameters)
+                    else:
+                        extra_val = self.ExtraCallback()
+                    if isinstance(extra_val, dict):
+                        GUIInfo.update(extra_val)
+                    elif extra_val:
+                        GUIInfo["band"] = str(extra_val)
+                except Exception as ex:
+                    self.LogErrorLine("Error in ExtraCallback (" + str(self.Title) + "): " + str(ex))
         except Exception as e1:
             self.LogErrorLine("Error in GetGUIInfo: (" + self.Title + ") : " + str(e1))
         return GUIInfo

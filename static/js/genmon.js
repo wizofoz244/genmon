@@ -740,6 +740,7 @@ var Poll = {
             var tt = d.tiles[ti], sub = (tt.subtype||'').toLowerCase();
             if (sub === 'wifi' && tt.value) {
               ind.wifi = Math.abs(parseFloat(tt.value)) || 0;
+              if (tt.band) ind.wifiBand = tt.band;
             } else if (sub === 'temperature' && /cpu/i.test(tt.title||'') && tt.value) {
               ind.cpuTemp = parseFloat(tt.value) || 0;
             }
@@ -1061,8 +1062,9 @@ var UI = {
       var wPct = Math.round(Math.max(0, Math.min(100, (-dbm + 90) / 60 * 100)));
       var bars = dbm <= 30 ? 4 : dbm <= 50 ? 3 : dbm <= 65 ? 2 : 1;
       var wc = bars >= 3 ? 'ind-ok' : bars === 2 ? 'ind-warn' : 'ind-bad';
+      var bandTxt = ind.wifiBand ? ' (' + esc(ind.wifiBand) + ')' : '';
       parts.push(
-        '<div class="hdr-ind '+wc+'" title="WiFi: -'+dbm+' dBm ('+wPct+'%)">' +
+        '<div class="hdr-ind '+wc+'" title="WiFi: -'+dbm+' dBm ('+wPct+'%'+bandTxt+')">' +
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
         /* Fan-shaped wifi arcs — dim the ones above the signal level */
         '<path d="M1.42 9a16.02 16.02 0 0121.16 0"' + (bars < 4 ? ' class="ind-dim"' : '') + '/>' +
@@ -2311,7 +2313,8 @@ var Pages = {
           '</svg>' +
         '</div>' +
         '<div class="wifi-pct" id="wifi-pct-' + idx + '">--%</div>' +
-        '<div class="wifi-dbm" id="wifi-dbm-' + idx + '">-- dBm</div></div>';
+        '<div class="wifi-dbm" id="wifi-dbm-' + idx + '">-- dBm</div>' +
+        '<div class="wifi-band" id="wifi-band-' + idx + '"></div></div>';
     },
 
     _editControlsHtml: function(showFontCtrl, tileKey) {
@@ -2654,6 +2657,12 @@ var Pages = {
       if (arcs > 0) { $dot.attr('fill', col); } else { $dot.removeAttr('fill'); }
       $('#wifi-pct-'+domIdx).text(pct + '%');
       $('#wifi-dbm-'+domIdx).text(dbm + ' dBm');
+      var $band = $('#wifi-band-'+domIdx);
+      if (t.band) {
+        $band.text(t.band).show();
+      } else {
+        $band.text('').hide();
+      }
     },
 
     /* --- Weather tile helpers --- */
