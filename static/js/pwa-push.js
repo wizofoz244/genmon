@@ -27,11 +27,20 @@
 
         checkSubscriptionState: function() {
             var self = this;
-            navigator.serviceWorker.ready.then(function(reg) {
-                reg.pushManager.getSubscription().then(function(sub) {
-                    self.sub = sub;
-                    self.updateUIStatus(sub !== null);
-                });
+            if (!('serviceWorker' in navigator)) {
+                self.updateUIStatus(false);
+                return;
+            }
+            navigator.serviceWorker.register('/sw.js').then(function() {
+                return navigator.serviceWorker.ready;
+            }).then(function(reg) {
+                return reg.pushManager.getSubscription();
+            }).then(function(sub) {
+                self.sub = sub;
+                self.updateUIStatus(sub !== null);
+            }).catch(function(err) {
+                console.log('Push state check:', err);
+                self.updateUIStatus(false);
             });
         },
 
@@ -69,7 +78,9 @@
                     return;
                 }
                 var convertedKey = urlBase64ToUint8Array(res.public_key);
-                navigator.serviceWorker.ready.then(function(reg) {
+                navigator.serviceWorker.register('/sw.js').then(function() {
+                    return navigator.serviceWorker.ready;
+                }).then(function(reg) {
                     reg.pushManager.subscribe({
                         userVisibleOnly: true,
                         applicationServerKey: convertedKey
@@ -116,17 +127,22 @@
         },
 
         sendTestNotification: function() {
-            var endpoint = this.sub ? this.sub.endpoint : null;
+            if (!this.sub) {
+                alert('Please click "Enable Push Alerts" first to register this device before testing.');
+                return;
+            }
+            var endpoint = this.sub.endpoint;
             $.ajax({
                 url: '/api/webpush/test',
                 type: 'POST',
                 contentType: 'application/json',
                 data: JSON.stringify({ endpoint: endpoint }),
                 success: function() {
-                    alert('Test notification requested! Check your device lockscreen.');
+                    alert('Test notification sent! Check your lockscreen.');
                 },
-                error: function() {
-                    alert('Failed to trigger test notification.');
+                error: function(xhr) {
+                    var msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Failed to trigger test notification.';
+                    alert('Push test result: ' + msg);
                 }
             });
         },

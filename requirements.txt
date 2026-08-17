@@ -30,3 +30,5 @@ voipms==0.2.5
 RPi.GPIO
 aiohttp
 zeroconf
+pywebpush
+cryptography

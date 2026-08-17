@@ -263,15 +263,12 @@
     <script src="js/genmon.js?v={{ asset_ver('js/genmon.js') }}"></script>
     <script defer src="js/addon-icons.js?v={{ asset_ver('js/addon-icons.js') }}"></script>
     <script src="js/pwa-push.js?v={{ asset_ver('js/pwa-push.js') }}"></script>
-    <!-- Register SW only in installed PWA mode to avoid stale-cache issues in browsers.
-         In normal browser sessions, unregister any prior SW so users get fresh files. -->
+    <!-- Register ServiceWorker for PWA & Web Push -->
     <script>
-    if('serviceWorker' in navigator){
-      if(window.matchMedia('(display-mode: standalone)').matches || navigator.standalone){
-        navigator.serviceWorker.register('/sw.js');
-      } else {
-        navigator.serviceWorker.getRegistrations().then(function(r){r.forEach(function(s){s.unregister();});});
-      }
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(function(err) {
+        console.log('SW registration failed:', err);
+      });
     }
     </script>
 </body>
