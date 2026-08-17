@@ -40,14 +40,32 @@ notify = None
 subscriptions = []
 sub_lock = threading.Lock()
 
+def InitConfigIfNeeded():
+    global config, log
+    if config is None:
+        try:
+            conf_file = os.path.join("/etc/genmon", "genwebpush.conf")
+            if not os.path.isfile(conf_file):
+                conf_file = os.path.join(parent_root, "conf", "genwebpush.conf")
+            config = MyConfig(filename=conf_file, section="genwebpush")
+        except Exception:
+            pass
+    if log is None:
+        try:
+            log = SetupLogger("genwebpush", "/var/log/genwebpush.log")
+        except Exception:
+            pass
+
 # Standard VAPID helper / Key generation
 def EnsureVapidKeys():
-    global config
+    global config, log
+    InitConfigIfNeeded()
     try:
-        pub = config.ReadValue("vapid_public_key", default="")
-        priv = config.ReadValue("vapid_private_key", default="")
+        pub = config.ReadValue("vapid_public_key", default="") if config else ""
+        priv = config.ReadValue("vapid_private_key", default="") if config else ""
 
         if not pub or not priv:
+            # Method 1: cryptography
             try:
                 from cryptography.hazmat.primitives.asymmetric import ec
                 from cryptography.hazmat.primitives import serialization
@@ -63,20 +81,39 @@ def EnsureVapidKeys():
 
                 pub = base64.urlsafe_b64encode(raw_pub).decode("utf-8").rstrip("=")
                 priv = base64.urlsafe_b64encode(raw_priv).decode("utf-8").rstrip("=")
+            except Exception:
+                pass
 
+            # Method 2: OpenSSL CLI fallback
+            if not pub or not priv:
+                try:
+                    import subprocess
+                    tmp_pem = "/tmp/vapid_priv.pem"
+                    subprocess.check_output(["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", tmp_pem])
+                    out_pub = subprocess.check_output(["openssl", "ec", "-in", tmp_pem, "-pubout", "-outform", "DER"], stderr=subprocess.DEVNULL)
+                    pub = base64.urlsafe_b64encode(out_pub[-65:]).decode("utf-8").rstrip("=")
+                    out_priv_der = subprocess.check_output(["openssl", "ec", "-in", tmp_pem, "-outform", "DER"], stderr=subprocess.DEVNULL)
+                    priv = base64.urlsafe_b64encode(out_priv_der[7:39]).decode("utf-8").rstrip("=")
+                    if os.path.exists(tmp_pem):
+                        os.remove(tmp_pem)
+                except Exception as ex_ssl:
+                    if log:
+                        log.error("OpenSSL keygen error: " + str(ex_ssl))
+
+            if pub and priv and config:
                 config.WriteValue("vapid_public_key", pub)
                 config.WriteValue("vapid_private_key", priv)
-            except Exception as ex:
-                log.error("Error generating VAPID keys via cryptography: " + str(ex))
 
         return pub, priv
     except Exception as e:
-        log.error("Error in EnsureVapidKeys: " + str(e))
+        if log:
+            log.error("Error in EnsureVapidKeys: " + str(e))
         return "", ""
 
 # Subscriptions file management
 def GetSubscriptionsFile():
-    sub_file = config.ReadValue("subscriptions_file", default="")
+    InitConfigIfNeeded()
+    sub_file = config.ReadValue("subscriptions_file", default="") if config else ""
     if not sub_file:
         data_dir = os.path.join(parent_root, "data")
         if not os.path.exists(data_dir):

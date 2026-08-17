@@ -67,42 +67,54 @@
 
         subscribe: function() {
             var self = this;
-            if (Notification.permission === 'denied') {
-                alert('Push Notifications are blocked in browser settings. Please reset permissions for this site.');
+            if (typeof Notification === 'undefined') {
+                alert('Push Notifications are not supported in this browser window. On iOS Safari, you must tap "Share -> Add to Home Screen" first.');
                 return;
             }
 
-            $.getJSON('/api/webpush/vapid_key', function(res) {
-                if (!res || !res.public_key) {
-                    alert('Could not retrieve VAPID key from server.');
+            if (Notification.permission === 'denied') {
+                alert('Push Notifications are blocked in your browser settings for this site. Please enable Notification permissions in browser settings.');
+                return;
+            }
+
+            var reqPromise = Notification.permission === 'default' ? Notification.requestPermission() : Promise.resolve(Notification.permission);
+
+            reqPromise.then(function(perm) {
+                if (perm !== 'granted') {
+                    alert('Notification permission was not granted (' + perm + ').');
                     return;
                 }
-                var convertedKey = urlBase64ToUint8Array(res.public_key);
-                navigator.serviceWorker.register('/sw.js').then(function() {
-                    return navigator.serviceWorker.ready;
-                }).then(function(reg) {
-                    reg.pushManager.subscribe({
-                        userVisibleOnly: true,
-                        applicationServerKey: convertedKey
+
+                $.getJSON('/api/webpush/vapid_key').done(function(res) {
+                    if (!res || !res.public_key) {
+                        alert('Could not retrieve VAPID key from server.');
+                        return;
+                    }
+                    var convertedKey = urlBase64ToUint8Array(res.public_key);
+                    navigator.serviceWorker.register('/sw.js').then(function() {
+                        return navigator.serviceWorker.ready;
+                    }).then(function(reg) {
+                        return reg.pushManager.subscribe({
+                            userVisibleOnly: true,
+                            applicationServerKey: convertedKey
+                        });
                     }).then(function(sub) {
                         self.sub = sub;
-                        $.ajax({
+                        return $.ajax({
                             url: '/api/webpush/subscribe',
                             type: 'POST',
                             contentType: 'application/json',
-                            data: JSON.stringify(sub.toJSON()),
-                            success: function() {
-                                self.updateUIStatus(true);
-                                alert('Success! Web Push alerts enabled for this device.');
-                            },
-                            error: function() {
-                                alert('Subscribed in browser, but failed to save subscription on server.');
-                            }
+                            data: JSON.stringify(sub.toJSON())
                         });
+                    }).then(function() {
+                        self.updateUIStatus(true);
+                        alert('Success! Web Push alerts enabled for this device.');
                     }).catch(function(err) {
                         console.error('Subscription error:', err);
-                        alert('Push Subscription error: ' + err.message);
+                        alert('Push Subscription error: ' + (err.message || err));
                     });
+                }).fail(function(xhr, status, err) {
+                    alert('Failed to reach VAPID key endpoint: ' + (err || status));
                 });
             });
         },
