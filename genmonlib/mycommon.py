@@ -217,16 +217,15 @@ class MyCommon(object):
     # ---------------------------------------------------------------------------
     def LogInfo(self, message, LogLine=False):
 
-        if not LogLine:
-            self.LogError(message)
-        else:
-            self.LogErrorLine(message)
+        if not self.log == None:
+            self.log.info(message)
         self.LogConsole(message)
 
     # ---------------------MyCommon::LogConsole------------------------------------
     def LogConsole(self, Message, Error=None):
         if not self.console == None:
-            self.console.error(Message)
+            # Use info level for console output stream
+            self.console.info(Message)
 
     # ---------------------MyCommon::LogError------------------------------------
     def LogError(self, Message, Error=None):
@@ -242,7 +241,7 @@ class MyCommon(object):
         if not self.log == None:
             self.log.error(Message)
         if not self.console == None:
-            self.console.error(Message)
+            self.console.info(Message)
         raise Exception(Message)
 
     # ---------------------MyCommon::LogErrorLine--------------------------------
