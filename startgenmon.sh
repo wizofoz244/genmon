@@ -72,8 +72,8 @@ function verify_and_show_status() {
   echo "=================================================================="
   sleep 3
 
-  local core_procs=("genloader.py" "genmon.py" "genserv.py")
-  local all_procs=("genloader.py" "genmon.py" "genserv.py" "genwebpush.py" "genpushover.py" "genmqtt.py" "gengpio.py")
+  local core_procs=("genmon.py" "genserv.py")
+  local all_procs=("genmon.py" "genserv.py" "genwebpush.py" "genpushover.py" "genmqtt.py" "gengpio.py")
   local failed_count=0
   local running_count=0
 
