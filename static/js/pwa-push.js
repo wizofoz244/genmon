@@ -38,8 +38,30 @@
             }).then(function(reg) {
                 return reg.pushManager.getSubscription();
             }).then(function(sub) {
-                self.sub = sub;
-                self.updateUIStatus(sub !== null);
+                if (!sub) {
+                    self.sub = null;
+                    self.updateUIStatus(false);
+                    return;
+                }
+                $.ajax({
+                    url: '/api/webpush/subscriptions',
+                    type: 'GET',
+                    success: function(res) {
+                        var activeEndpoints = (res && res.subscriptions) ? res.subscriptions.map(function(s) { return s.endpoint; }) : [];
+                        if (activeEndpoints.indexOf(sub.endpoint) !== -1) {
+                            self.sub = sub;
+                            self.updateUIStatus(true);
+                        } else {
+                            sub.unsubscribe().catch(function() {});
+                            self.sub = null;
+                            self.updateUIStatus(false);
+                        }
+                    },
+                    error: function() {
+                        self.sub = sub;
+                        self.updateUIStatus(true);
+                    }
+                });
             }).catch(function(err) {
                 console.log('Push state check:', err);
                 self.updateUIStatus(false);
@@ -272,6 +294,11 @@
                     contentType: 'application/json',
                     data: JSON.stringify({ endpoint: endpoint }),
                     success: function() {
+                        if (self.sub && self.sub.endpoint === endpoint) {
+                            self.sub.unsubscribe().catch(function() {});
+                            self.sub = null;
+                            self.updateUIStatus(false);
+                        }
                         self.loadSubscribedDevices();
                         self.checkSubscriptionState();
                     }
