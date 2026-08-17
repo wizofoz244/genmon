@@ -775,13 +775,16 @@ input, select, textarea { font: inherit; color: inherit; }
   list-style: none; margin: 0; padding: 0;
 }
 .logs-entry {
-  display: flex; flex-wrap: wrap; gap: 6px 10px;
   padding: 6px 0; font-size: .85rem;
   border-bottom: 1px solid var(--border);
 }
 .logs-entry:last-child { border-bottom: none; }
 [data-theme~="dark"] .logs-entry {
   border-bottom-color: rgba(55,75,110,.25);
+}
+/* Flex on inner row only — keeps <li> a normal listitem for screen readers */
+.logs-entry-row {
+  display: flex; flex-wrap: wrap; gap: 6px 10px;
 }
 .logs-entry-time {
   flex-shrink: 0; font-family: var(--mono, ui-monospace, monospace);
@@ -1011,6 +1014,16 @@ input, select, textarea { font: inherit; color: inherit; }
 .wifi-pct { font-size: 1.3rem; font-weight: 700; line-height: 1.1; }
 .wifi-dbm { font-size: .65rem; color: var(--text-2); margin-bottom: 2px; }
 .wifi-band { font-size: .75rem; font-weight: 600; color: var(--text-2); margin-top: 1px; }
+
+/* WiFi tile: swap between the bars view (default) and the scientific dBm dial */
+.tile-wifi .wifi-view-dial { display: none; }
+.tile-wifi[data-gtype="wifidial"] .wifi-view-bars { display: none; }
+.tile-wifi[data-gtype="wifidial"] .wifi-view-dial { display: flex; padding: 2px 0; }
+.tile-wifi[data-gtype="wifidial"] .wifi-dbm { display: none; }  /* dial LCD already shows dBm */
+/* Wider Bars/Dial picker buttons (text instead of a glyph) */
+.gauge-pick-btn.wide {
+  width: auto; padding: 0 7px; font-size: .58rem; text-transform: none;
+}
 
 /* --- Tile edit controls (visible in edit mode) --- */
 .tile-edit-controls {
@@ -1258,9 +1271,17 @@ input, select, textarea { font: inherit; color: inherit; }
 .status-panel { padding: 16px; }
 .status-section { margin-bottom: 12px; }
 .status-section:last-child { margin-bottom: 0; }
+.status-section-hdr {
+  margin: 0 0 6px; padding: 0; font-size: inherit; font-weight: inherit;
+}
 .status-section-title {
   font-weight: 600; font-size: .88rem; color: var(--accent);
-  margin-bottom: 6px; cursor: pointer; display: flex; align-items: center; gap: 6px;
+  cursor: pointer; display: flex; align-items: center; gap: 6px;
+  background: none; border: none; padding: 0; margin: 0;
+  font-family: inherit; text-align: left; width: 100%;
+}
+.status-section-title:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px;
 }
 .status-section-title::before {
   content: '\25b8'; display: inline-block; transition: transform var(--fast);
@@ -1268,6 +1289,10 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .status-section-title.open::before { transform: rotate(90deg); }
 .status-kv { padding-left: 16px; }
+.status-dl { margin: 0; }
+.status-list {
+  list-style: none; margin: 0; padding: 0;
+}
 .kv-row {
   display: flex; padding: 3px 0; font-size: .88rem;
   border-bottom: 1px solid var(--border);
@@ -1280,8 +1305,8 @@ input, select, textarea { font: inherit; color: inherit; }
   background: rgba(79,143,250,.03);
   border-radius: 4px;
 }
-.kv-key { color: var(--text-2); min-width: 180px; flex-shrink: 0; padding-right: 12px; }
-.kv-val { color: var(--text-0); word-break: break-word; }
+.kv-key { color: var(--text-2); min-width: 180px; flex-shrink: 0; padding-right: 12px; margin: 0; }
+.kv-val { color: var(--text-0); word-break: break-word; margin: 0; }
 
 /* ---------- Gauges (SVG containers — sports-car cluster) ----- */
 .gauge-svg { width: 100%; max-width: 180px; }
@@ -1328,7 +1353,9 @@ input, select, textarea { font: inherit; color: inherit; }
 .btn-icon { width: 34px; height: 34px; padding: 0; }
 .btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
 .btn-ico { flex-shrink: 0; vertical-align: middle; }
+.custom-cmd-group:last-child { margin-bottom: 0; }
 .custom-cmd-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.custom-cmd-group .form-hint { margin-top: 4px; }
 .custom-cmd-input { font-size: .85rem; }
 
 /* ---------- Forms ------------------------------------------- */

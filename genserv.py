@@ -91,6 +91,15 @@ import re
 # -------------------------------------------------------------------------------
 app = Flask(__name__, static_url_path="/static")
 
+# Enable gzip compression when flask-compress is available; big bandwidth win
+# for slow/remote clients. Silently skipped if the package is not installed.
+try:
+    from flask_compress import Compress
+
+    Compress(app)
+except Exception:
+    pass
+
 # this allows the flask support to be extended on a per site basis but sill allow for
 # updates via the main github repository. If genservex.py exists, load it
 if os.path.isfile(
@@ -135,6 +144,8 @@ bMfaTrustExtend = False
 LastOTPSendTime = None
 bUseSecureHTTP = False
 CertMode = "selfsigned"  # selfsigned | localca | custom
+# When True, allow the web UI to be embedded in an iframe from any site
+bAllowIframe = False
 SSLContext = None
 HTTPPort = 8000
 OldHTTPPort = None
@@ -293,41 +304,80 @@ def logout():
 
 
 # -------------------------------------------------------------------------------
+# Extensions treated as long-lived static assets that browsers may cache.
+STATIC_ASSET_EXTENSIONS = (
+    "css", "js", "png", "jpg", "jpeg", "gif", "svg", "ico",
+    "woff", "woff2", "ttf", "webmanifest",
+)
+
+
+def _is_static_asset_request(path):
+    # sw.js must always revalidate so service-worker updates propagate quickly.
+    if path == "/sw.js":
+        return False
+    ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    return ext in STATIC_ASSET_EXTENSIONS
+
+
+@app.context_processor
+def inject_asset_helpers():
+    # asset_ver() returns the file mtime so templates can append ?v=<mtime>,
+    # busting the browser cache automatically whenever an asset is updated.
+    def asset_ver(rel_path):
+        try:
+            full = os.path.join(app.static_folder, rel_path.lstrip("/"))
+            return str(int(os.path.getmtime(full)))
+        except Exception:
+            return "1"
+
+    return dict(asset_ver=asset_ver)
+
+
+# -------------------------------------------------------------------------------
 @app.after_request
 def add_header(r):
     """
-    Force cache header and add security headers.
+    Set cache headers (long-lived for versioned static assets, no-store for
+    everything else) and add security headers.
     Ensure static assets receive explicit Content-Type headers so X-Content-Type-Options: nosniff
     never rejects stylesheets or scripts.
     """
-    if request.path.endswith(".css") or "/css/" in request.path or "/static/css/" in request.path:
-        r.headers["Content-Type"] = "text/css; charset=utf-8"
-        r.headers["Cache-Control"] = "no-cache, must-revalidate"
+    if _is_static_asset_request(request.path):
+        if request.path.endswith(".css") or "/css/" in request.path or "/static/css/" in request.path:
+            r.headers["Content-Type"] = "text/css; charset=utf-8"
+        elif request.path.endswith(".js") or "/js/" in request.path or "/static/js/" in request.path:
+            r.headers["Content-Type"] = "application/javascript; charset=utf-8"
         r.headers["Access-Control-Allow-Origin"] = "*"
-    elif request.path.endswith(".js") or "/js/" in request.path or "/static/js/" in request.path:
-        r.headers["Content-Type"] = "application/javascript; charset=utf-8"
-        r.headers["Cache-Control"] = "no-cache, must-revalidate"
-        r.headers["Access-Control-Allow-Origin"] = "*"
-    elif request.path.startswith(("/static/", "/icons/", "/svg/", "/favicon.ico")):
-        r.headers["Cache-Control"] = "no-cache, must-revalidate"
-        r.headers["Access-Control-Allow-Origin"] = "*"
+        if request.args.get("v"):
+            r.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            r.headers["Cache-Control"] = "public, max-age=3600"
     else:
-        r.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        r.headers[
+            "Cache-Control"
+        ] = "no-cache, no-store, must-revalidate, public, max-age=0"
         r.headers["Pragma"] = "no-cache"
         r.headers["Expires"] = "0"
 
     # --- security headers ---
     r.headers["X-Content-Type-Options"] = "nosniff"
-    r.headers["X-Frame-Options"] = "DENY"
     r.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     r.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    # Framing is blocked by default. When embedding is allowed, drop
+    # X-Frame-Options (its ALLOW-FROM is deprecated) and open CSP
+    # frame-ancestors so the page can load inside an iframe.
+    if bAllowIframe:
+        frame_ancestors = "*"
+    else:
+        frame_ancestors = "'none'"
+        r.headers["X-Frame-Options"] = "DENY"
     r.headers["Content-Security-Policy"] = (
         "default-src 'self' https: http: data: blob:; "
         "script-src 'self' https: http: 'unsafe-inline' 'unsafe-eval'; "
         "style-src 'self' https: http: 'unsafe-inline'; "
         "img-src 'self' https: http: data: blob:; "
         "connect-src 'self' https: http: https://raw.githubusercontent.com; "
-        "frame-ancestors 'none'"
+        "frame-ancestors " + frame_ancestors
     )
 
     # When HTTPS is off, tell browsers to stop forcing HTTPS (clears cached HSTS)
@@ -1472,6 +1522,7 @@ def SendTestEmail(query_string):
         use_ssl = parameters["use_ssl"] in (True, "true", "True", "1", 1)
         tls_disable = parameters["tls_disable"] in (True, "true", "True", "1", 1)
         smtpauth_disable = parameters["smtpauth_disable"] in (True, "true", "True", "1", 1)
+        use_html = parameters.get("use_html", False) in (True, "true", "True", "1", 1)
 
     except Exception as e1:
         LogErrorLine("Error parsing parameters in SendTestEmail: " + str(e1))
@@ -1490,6 +1541,7 @@ def SendTestEmail(query_string):
             use_ssl=use_ssl,
             tls_disable=tls_disable,
             smtpauth_disable=smtpauth_disable,
+            use_html=use_html,
         )
         return jsonify({"message": ReturnMessage})
     except Exception as e1:
@@ -3491,7 +3543,7 @@ def GetAddOns():
         )
         AddOnCfg["genotodata"]["title"] = "Otodata TM6030 Propane Tank Sensor"
         AddOnCfg["genotodata"]["description"] = Description
-        AddOnCfg["genotodata"]["icon"] = "Genmon"
+        AddOnCfg["genotodata"]["icon"] = "otodata"
         AddOnCfg["genotodata"]["url"] = (
             "https://github.com/jgyates/genmon/wiki/"
             "1----Software-Overview#genotodatapy-optional"
@@ -4018,18 +4070,18 @@ def ReadAdvancedSettingsFromFile():
             GENMON_SECTION,
             "additional_modbus_timeout",
         ]
-        if ControllerType == "custom":
-            ConfigSettings["modbus_between_frame_delay"] = [
-                "float",
-                "Modbus Betweeen Frame Delay (sec)",
-                8,
-                "0.0",
-                "",
-                "number",
-                GENMON_CONFIG,
-                GENMON_SECTION,
-                "modbus_between_frame_delay",
-            ]
+
+        ConfigSettings["modbus_between_frame_delay"] = [
+            "float",
+            "Modbus Between Frame Delay (sec)",
+            8,
+            "0.0",
+            "",
+            "number",
+            GENMON_CONFIG,
+            GENMON_SECTION,
+            "modbus_between_frame_delay",
+        ]
         # Depricated, no longer needed
         #ConfigSettings["use_modbus_fc4"] = [
         #    "boolean",
@@ -5168,6 +5220,17 @@ def ReadSettingsFromFile():
         GENMON_SECTION,
         "http_port",
     ]
+    ConfigSettings["allow_iframe"] = [
+        "boolean",
+        "Allow Embedding in an iframe",
+        216,
+        False,
+        "",
+        "",
+        GENMON_CONFIG,
+        GENMON_SECTION,
+        "allow_iframe",
+    ]
     ConfigSettings["favicon"] = [
         "string",
         "FavIcon",
@@ -5400,6 +5463,17 @@ def ReadSettingsFromFile():
         MAIL_CONFIG,
         MAIL_SECTION,
         "tls_disable",
+    ]
+    ConfigSettings["use_html"] = [
+        "boolean",
+        "Use HTML Email Format",
+        310,
+        False,
+        "",
+        "",
+        MAIL_CONFIG,
+        MAIL_SECTION,
+        "use_html",
     ]
     ConfigSettings["smtpauth_disable"] = [
         "boolean",
@@ -6409,6 +6483,7 @@ def LoadConfig():
     global bMfaEnrolled
     global SecretMFAKey
     global bUseSecureHTTP
+    global bAllowIframe
     global LdapServer
     global LdapBase
     global DomainNetbios
@@ -6488,6 +6563,12 @@ def LoadConfig():
         if not bUseSecureHTTP:
             # dont use MFA unless HTTPS is enabled
             bUseMFA = False
+
+        # Allow iframe embedding from any origin. Default False keeps framing
+        # blocked (X-Frame-Options DENY + CSP frame-ancestors 'none').
+        bAllowIframe = ConfigFiles[GENMON_CONFIG].ReadValue(
+            "allow_iframe", return_type=bool, default=False
+        )
 
         ListenIPAddress = ConfigFiles[GENMON_CONFIG].ReadValue("flask_listen_ip_address", default="0.0.0.0")
         
