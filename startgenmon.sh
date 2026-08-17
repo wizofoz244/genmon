@@ -107,15 +107,23 @@ function verify_and_show_status() {
 }
 
 #-------------------------------------------------------------------------------
+function clean_pycache() {
+  echo "Clearing Python bytecode cache (*.pyc and __pycache__)..."
+  find "$genmondir" -name "*.pyc" -delete 2>/dev/null || true
+  find "$genmondir" -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+}
+
+#-------------------------------------------------------------------------------
 function printhelp(){
   echo "usage: "
   echo " "
-  echo "./startgenmon.sh <options> start|stop|restart|hardstop|status"
+  echo "./startgenmon.sh <options> start|stop|restart|hardstop|status|clearcache"
   echo ""
   echo "valid options:"
   echo "   -h      display help"
   echo "   -c      path of config files"
-  echo "   -p      Specifiy 2 or 3 for python version. 2 is default"
+  echo "   -p      Specify 2 or 3 for python version. 3 is default"
+  echo "   -k      Clear Python bytecode cache (__pycache__ / .pyc) before execution"
   echo ""
 }
 
@@ -135,6 +143,10 @@ while (( "$#" )); do
         echo "Error: Argument for $1 is missing" >&2
         exit 1
       fi
+      ;;
+    -k|--clean|--clear-cache)
+      clean_pycache
+      shift
       ;;
     -h)
      printhelp
@@ -177,11 +189,16 @@ for val in $PARAMS; do
       ;;
     restart)
       found_action=true
+      clean_pycache
       env_activate
       echo "Restarting genmon python scripts..."
       sudo $pythoncommand "$genmondir/genloader.py" -r $config_path
       env_deactivate
       verify_and_show_status
+      ;;
+    clearcache|clean)
+      found_action=true
+      clean_pycache
       ;;
     status)
       found_action=true
@@ -195,7 +212,7 @@ for val in $PARAMS; do
 done
 
 if [ "$found_action" = false ] ; then
-  echo "Invalid command. Valid commands are start, stop, restart, hardstop or status."
+  echo "Invalid command. Valid commands are start, stop, restart, hardstop, status, or clearcache."
 fi
 
 exit 0
