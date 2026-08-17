@@ -13,10 +13,11 @@ const SHELL_ASSETS = [
 
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(SHELL_ASSETS))
-      .then(() => self.skipWaiting())
-      .catch(() => self.skipWaiting())
+    caches.open(CACHE_NAME).then(cache => {
+      return Promise.all(
+        SHELL_ASSETS.map(url => cache.add(url).catch(err => console.log('SW asset caching skipped:', url, err)))
+      );
+    }).then(() => self.skipWaiting())
   );
 });
 

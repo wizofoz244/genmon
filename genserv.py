@@ -417,8 +417,10 @@ def serve_svg(filename):
 @app.route("/sw.js")
 @app.route("/static/sw.js")
 def serve_sw():
-    response = send_from_directory(app.static_folder, "sw.js", mimetype="application/javascript")
+    static_dir = os.path.join(app.root_path, "static")
+    response = send_from_directory(static_dir, "sw.js", mimetype="application/javascript")
     response.headers["Service-Worker-Allowed"] = "/"
+    response.headers["Content-Type"] = "application/javascript; charset=utf-8"
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return response
 
