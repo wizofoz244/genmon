@@ -72,8 +72,13 @@
             var statusEl = document.getElementById('webpush-status-label');
             var btnToggle = document.getElementById('btn-webpush-toggle');
             if (statusEl) {
-                statusEl.textContent = isSubscribed ? 'Subscribed (Active)' : 'Not Subscribed';
-                statusEl.className = isSubscribed ? 'badge bg-success' : 'badge bg-secondary';
+                statusEl.textContent = isSubscribed ? 'Active' : 'Inactive';
+                statusEl.className = isSubscribed ? 'badge bg-success' : 'badge bg-danger';
+                statusEl.style.backgroundColor = isSubscribed ? 'var(--green, #4CAF50)' : 'var(--danger, #f05252)';
+                statusEl.style.color = '#ffffff';
+                statusEl.style.padding = '3px 8px';
+                statusEl.style.borderRadius = '10px';
+                statusEl.style.fontWeight = '600';
             }
             if (btnToggle) {
                 btnToggle.textContent = isSubscribed ? 'Disable Push Alerts' : 'Enable Push Alerts';
