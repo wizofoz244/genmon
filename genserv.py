@@ -2078,6 +2078,16 @@ def GetAddOns():
         ] = "https://github.com/jgyates/genmon/wiki/1----Software-Overview#gensyslogpy-optional"
         AddOnCfg["gensyslog"]["parameters"] = None
 
+        # GENWEBPUSH
+        AddOnCfg["genwebpush"] = collections.OrderedDict()
+        AddOnCfg["genwebpush"]["enable"] = ConfigFiles[GENLOADER_CONFIG].ReadValue(
+            "enable", return_type=bool, section="genwebpush", default=True
+        )
+        AddOnCfg["genwebpush"]["title"] = "Web Push Notifications (PWA)"
+        AddOnCfg["genwebpush"]["description"] = "VAPID-signed push alerts for mobile PWA devices & web browsers"
+        AddOnCfg["genwebpush"]["icon"] = "notifications"
+        AddOnCfg["genwebpush"]["parameters"] = None
+
         # GENMQTT
         AddOnCfg["genmqtt"] = collections.OrderedDict()
         AddOnCfg["genmqtt"]["enable"] = ConfigFiles[GENLOADER_CONFIG].ReadValue(
@@ -7285,6 +7295,8 @@ def webpush_vapid_key():
 @app.route("/api/webpush/subscribe", methods=["POST"])
 def webpush_subscribe():
     try:
+        if not HasWriteAccess():
+            return jsonify(status="error", message="Unauthorized: Write access required"), 403
         sub_data = request.get_json(force=True, silent=True) or {}
         if not sub_data or "endpoint" not in sub_data:
             return jsonify(status="error", message="Invalid subscription payload"), 400
@@ -7299,6 +7311,8 @@ def webpush_subscribe():
 @app.route("/api/webpush/unsubscribe", methods=["POST"])
 def webpush_unsubscribe():
     try:
+        if not HasWriteAccess():
+            return jsonify(status="error", message="Unauthorized: Write access required"), 403
         data = request.get_json(force=True, silent=True) or {}
         endpoint = data.get("endpoint")
         if endpoint:
@@ -7319,6 +7333,8 @@ def webpush_preferences():
             ConfigFiles[GENWEBPUSH_CONFIG] = config_obj
 
         if request.method == "POST":
+            if not HasWriteAccess():
+                return jsonify(status="error", message="Unauthorized: Write access required"), 403
             data = request.get_json(force=True, silent=True) or {}
             for key in ["notify_outage", "notify_exercise", "notify_error", "notify_warning", "notify_off_manual", "notify_fuel", "notify_pi_state", "notify_sw_update", "notify_info"]:
                 if key in data:
@@ -7337,6 +7353,8 @@ def webpush_preferences():
 @app.route("/api/webpush/test", methods=["POST"])
 def webpush_test():
     try:
+        if not HasWriteAccess():
+            return jsonify(status="error", message="Unauthorized: Write access required"), 403
         data = request.get_json(force=True, silent=True) or {}
         endpoint = data.get("endpoint")
         from addon.genwebpush import SendWebPushPayload
@@ -7483,11 +7501,13 @@ if __name__ == "__main__":
     GENHOMEASSISTANT_CONFIG = os.path.join(ConfigFilePath, "genhomeassistant.conf")
     GENHALINK_CONFIG = os.path.join(ConfigFilePath, "genhalink.conf")
     GENHUBITAT_CONFIG = os.path.join(ConfigFilePath, "genhubitat.conf")
+    GENWEBPUSH_CONFIG = os.path.join(ConfigFilePath, "genwebpush.conf")
 
     ConfigFileList = [
         GENMON_CONFIG,
         MAIL_CONFIG,
         GENLOADER_CONFIG,
+        GENWEBPUSH_CONFIG,
         GENSMS_CONFIG,
         MYMODEM_CONFIG,
         GENPUSHOVER_CONFIG,
