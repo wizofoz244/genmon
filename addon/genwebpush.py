@@ -57,6 +57,22 @@ def InitConfigIfNeeded():
             pass
 
 # Standard VAPID helper / Key generation
+def ValidateVapidKeys(pub_b64, priv_b64):
+    if not pub_b64 or not priv_b64:
+        return False
+    try:
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives import serialization
+        priv_bytes = base64.urlsafe_b64decode(priv_b64 + "==")
+        priv_int = int.from_bytes(priv_bytes, "big")
+        priv_key = ec.derive_private_key(priv_int, ec.SECP256R1())
+        pub_key = priv_key.public_key()
+        pub_bytes = pub_key.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+        derived_pub_b64 = base64.urlsafe_b64encode(pub_bytes).decode("utf-8").rstrip("=")
+        return derived_pub_b64 == pub_b64
+    except Exception:
+        return True
+
 def EnsureVapidKeys():
     global config, log
     InitConfigIfNeeded()
@@ -64,7 +80,13 @@ def EnsureVapidKeys():
         pub = config.ReadValue("vapid_public_key", default="") if config else ""
         priv = config.ReadValue("vapid_private_key", default="") if config else ""
 
-        if not pub or not priv:
+        keys_valid = ValidateVapidKeys(pub, priv) if (pub and priv) else False
+        if not pub or not priv or not keys_valid:
+            if pub and priv and not keys_valid:
+                if log: log.warning("Mismatched VAPID keypair detected in configuration. Auto-regenerating fresh matching VAPID EC keypair...")
+            pub = ""
+            priv = ""
+
             # Method 1: cryptography
             try:
                 from cryptography.hazmat.primitives.asymmetric import ec
@@ -103,6 +125,7 @@ def EnsureVapidKeys():
             if pub and priv and config:
                 config.WriteValue("vapid_public_key", pub)
                 config.WriteValue("vapid_private_key", priv)
+                if log: log.info("Generated fresh mathematically matching VAPID keypair and updated configuration.")
 
         return pub, priv
     except Exception as e:
