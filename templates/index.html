@@ -248,6 +248,10 @@
                     <input type="checkbox" id="pref-notify_sw_update" checked>
                 </label>
             </div>
+            <h4 style="font-size: 1rem; margin-top: 15px; margin-bottom: 10px; border-bottom: 1px solid #1e293b; padding-bottom: 5px;">📱 Subscribed Devices</h4>
+            <div id="pwa-subscribed-devices-list" style="max-height: 140px; overflow-y: auto; font-size: 0.85rem; margin-bottom: 15px;">
+                <div style="color: #94a3b8; text-align: center; padding: 10px;">Loading registered devices...</div>
+            </div>
             <div style="display:flex; justify-content:flex-end; gap:10px;">
                 <button type="button" onclick="document.getElementById('pwa-push-modal').classList.add('hidden')" class="btn btn-secondary">Close</button>
                 <button type="button" onclick="window.GenmonPWA.savePreferences()" class="btn btn-success">Save Preferences</button>

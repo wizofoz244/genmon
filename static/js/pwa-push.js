@@ -100,14 +100,18 @@
                         });
                     }).then(function(sub) {
                         self.sub = sub;
+                        var subPayload = sub.toJSON();
+                        subPayload.user_agent = navigator.userAgent;
+                        subPayload.added_time = new Date().toISOString();
                         return $.ajax({
                             url: '/api/webpush/subscribe',
                             type: 'POST',
                             contentType: 'application/json',
-                            data: JSON.stringify(sub.toJSON())
+                            data: JSON.stringify(subPayload)
                         });
                     }).then(function() {
                         self.updateUIStatus(true);
+                        self.loadSubscribedDevices();
                         alert('Success! Web Push alerts enabled for this device.');
                     }).catch(function(err) {
                         console.error('Subscription error:', err);
@@ -137,7 +141,7 @@
                     data: JSON.stringify({ endpoint: endpoint }),
                     success: function() {
                         self.updateUIStatus(false);
-                        alert('Push alerts disabled for this device.');
+                        self.loadSubscribedDevices();
                     }
                 });
             });

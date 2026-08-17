@@ -165,6 +165,43 @@ def RemoveSubscription(endpoint):
         subscriptions = [s for s in subscriptions if s.get("endpoint") != endpoint]
     SaveSubscriptions()
 
+def GetSubscriptionsList():
+    InitConfigIfNeeded()
+    LoadSubscriptions()
+    result = []
+    with sub_lock:
+        for s in subscriptions:
+            endpoint = s.get("endpoint", "")
+            ua = s.get("user_agent", "")
+            if "android" in ua.lower():
+                dev_type = "📱 Android"
+            elif "iphone" in ua.lower() or "ipad" in ua.lower():
+                dev_type = "📱 iOS Safari"
+            elif "macintosh" in ua.lower() or "mac os" in ua.lower():
+                dev_type = "💻 Mac Desktop"
+            elif "windows" in ua.lower():
+                dev_type = "💻 Windows Desktop"
+            else:
+                dev_type = "🌐 Web Browser"
+
+            if "fcm.googleapis.com" in endpoint:
+                svc = "Google Push (FCM)"
+            elif "apple.com" in endpoint:
+                svc = "Apple Push (APNs)"
+            elif "mozilla" in endpoint:
+                svc = "Mozilla Push"
+            else:
+                svc = "Web Push"
+
+            result.append({
+                "endpoint": endpoint,
+                "user_agent": ua,
+                "device_type": dev_type,
+                "service": svc,
+                "added_time": s.get("added_time", "")
+            })
+    return result
+
 # Push Notification Sending
 def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x192.png", target_endpoint=None):
     global subscriptions

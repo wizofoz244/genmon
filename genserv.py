@@ -7330,6 +7330,17 @@ def webpush_unsubscribe():
         return jsonify(status="error", message=str(e1)), 500
 
 
+@app.route("/api/webpush/subscriptions", methods=["GET"])
+def webpush_subscriptions():
+    try:
+        from addon.genwebpush import GetSubscriptionsList
+        subs = GetSubscriptionsList()
+        return jsonify(status="ok", subscriptions=subs, count=len(subs))
+    except Exception as e1:
+        LogErrorLine("Error getting webpush subscriptions list: " + str(e1))
+        return jsonify(status="error", message=str(e1)), 500
+
+
 @app.route("/api/webpush/preferences", methods=["GET", "POST"])
 def webpush_preferences():
     try:
