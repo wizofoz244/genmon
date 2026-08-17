@@ -295,9 +295,9 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
             except Exception as ex_push:
                 err_str = str(ex_push)
                 push_errors.append(err_str)
-                if "404" in err_str or "410" in err_str:
+                if any(k in err_str for k in ["400", "403", "404", "410", "BadJwtToken"]):
                     to_remove.append(endpoint)
-                    if log: log.warning(f"Push endpoint expired (404/410) for {dev_label}: {endpoint[:45]}...")
+                    if log: log.warning(f"Push endpoint invalid/expired ({err_str}) for {dev_label}: auto-removing stale subscription.")
                 else:
                     if log: log.error(f"Failed to send push to {dev_label} ({endpoint[:45]}...): {err_str}")
                     if console: console.error(f"Failed to send push to {dev_label}: {err_str}")

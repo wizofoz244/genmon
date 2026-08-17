@@ -4690,7 +4690,7 @@ var Pages = {
         return { unackError: unackError, unackWarn: unackWarn };
       }
 
-      ['sync', 'backup', 'sdcard', 'watchdog'].forEach(function(key) {
+      ['sync', 'backup', 'sdcard', 'watchdog', 'webpush'].forEach(function(key) {
         var obj = self._getTabLogData(key);
         var st = evalTabStatus(key, obj);
         var $b = $('#sl-badge-' + key);
