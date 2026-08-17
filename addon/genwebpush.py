@@ -159,8 +159,19 @@ def AddSubscription(sub_data):
     SaveSubscriptions()
     return True
 
-def RemoveSubscription(endpoint):
+def RemoveSubscription(endpoint, notify_device=True):
     global subscriptions
+    if notify_device and endpoint:
+        try:
+            SendWebPushPayload(
+                "🔕 Web Push Device Removed",
+                "This device has been unsubscribed from Genmon alerts.",
+                category="warning",
+                target_endpoint=endpoint
+            )
+        except Exception as ex_notify:
+            if log: log.error("Error sending removal notification: " + str(ex_notify))
+
     with sub_lock:
         subscriptions = [s for s in subscriptions if s.get("endpoint") != endpoint]
     SaveSubscriptions()
