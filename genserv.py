@@ -2079,10 +2079,15 @@ def GetAddOns():
         AddOnCfg["gensyslog"]["parameters"] = None
 
         # GENWEBPUSH
+        try:
+            webpush_enabled = ConfigFiles[GENLOADER_CONFIG].ReadValue(
+                "enable", return_type=bool, section="genwebpush", default=True
+            ) if (GENLOADER_CONFIG in ConfigFiles and ConfigFiles[GENLOADER_CONFIG]) else True
+        except Exception:
+            webpush_enabled = True
+
         AddOnCfg["genwebpush"] = collections.OrderedDict()
-        AddOnCfg["genwebpush"]["enable"] = ConfigFiles[GENLOADER_CONFIG].ReadValue(
-            "enable", return_type=bool, section="genwebpush", default=True
-        )
+        AddOnCfg["genwebpush"]["enable"] = webpush_enabled
         AddOnCfg["genwebpush"]["title"] = "Web Push Notifications (PWA)"
         AddOnCfg["genwebpush"]["description"] = "VAPID-signed push alerts for mobile PWA devices & web browsers"
         AddOnCfg["genwebpush"]["icon"] = "notifications"

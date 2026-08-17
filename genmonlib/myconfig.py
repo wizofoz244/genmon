@@ -99,7 +99,7 @@ class MyConfig(MyCommon):
             if section != None:
                 self.SetSection(section)
 
-            if self.config.has_option(self.Section, Entry):
+            if self.config.has_section(self.Section) and self.config.has_option(self.Section, Entry):
                 if return_type == str:
                     return self.config.get(self.Section, Entry)
                 elif return_type == bool:
