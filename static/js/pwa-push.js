@@ -1,0 +1,177 @@
+// pwa-push.js: Client-side Web Push notification subscription & preference management for Genmon PWA
+
+(function() {
+    'use strict';
+
+    function urlBase64ToUint8Array(base64String) {
+        var padding = '='.repeat((4 - base64String.length % 4) % 4);
+        var base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+        var rawData = window.atob(base64);
+        var outputArray = new Uint8Array(rawData.length);
+        for (var i = 0; i < rawData.length; ++i) {
+            outputArray[i] = rawData.charCodeAt(i);
+        }
+        return outputArray;
+    }
+
+    window.GenmonPWA = {
+        sub: null,
+
+        init: function() {
+            if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+                console.log('Web Push is not supported in this browser environment.');
+                return;
+            }
+            this.checkSubscriptionState();
+        },
+
+        checkSubscriptionState: function() {
+            var self = this;
+            navigator.serviceWorker.ready.then(function(reg) {
+                reg.pushManager.getSubscription().then(function(sub) {
+                    self.sub = sub;
+                    self.updateUIStatus(sub !== null);
+                });
+            });
+        },
+
+        updateUIStatus: function(isSubscribed) {
+            var statusEl = document.getElementById('webpush-status-label');
+            var btnToggle = document.getElementById('btn-webpush-toggle');
+            if (statusEl) {
+                statusEl.textContent = isSubscribed ? 'Subscribed (Active)' : 'Not Subscribed';
+                statusEl.className = isSubscribed ? 'badge bg-success' : 'badge bg-secondary';
+            }
+            if (btnToggle) {
+                btnToggle.textContent = isSubscribed ? 'Disable Push Alerts' : 'Enable Push Alerts';
+                btnToggle.className = isSubscribed ? 'btn btn-outline-danger btn-sm' : 'btn btn-primary btn-sm';
+            }
+        },
+
+        togglePush: function() {
+            if (this.sub) {
+                this.unsubscribe();
+            } else {
+                this.subscribe();
+            }
+        },
+
+        subscribe: function() {
+            var self = this;
+            if (Notification.permission === 'denied') {
+                alert('Push Notifications are blocked in browser settings. Please reset permissions for this site.');
+                return;
+            }
+
+            $.getJSON('/api/webpush/vapid_key', function(res) {
+                if (!res || !res.public_key) {
+                    alert('Could not retrieve VAPID key from server.');
+                    return;
+                }
+                var convertedKey = urlBase64ToUint8Array(res.public_key);
+                navigator.serviceWorker.ready.then(function(reg) {
+                    reg.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: convertedKey
+                    }).then(function(sub) {
+                        self.sub = sub;
+                        $.ajax({
+                            url: '/api/webpush/subscribe',
+                            type: 'POST',
+                            contentType: 'application/json',
+                            data: JSON.stringify(sub.toJSON()),
+                            success: function() {
+                                self.updateUIStatus(true);
+                                alert('Success! Web Push alerts enabled for this device.');
+                            },
+                            error: function() {
+                                alert('Subscribed in browser, but failed to save subscription on server.');
+                            }
+                        });
+                    }).catch(function(err) {
+                        console.error('Subscription error:', err);
+                        alert('Push Subscription error: ' + err.message);
+                    });
+                });
+            });
+        },
+
+        unsubscribe: function() {
+            var self = this;
+            if (!this.sub) return;
+            var endpoint = this.sub.endpoint;
+            this.sub.unsubscribe().then(function() {
+                self.sub = null;
+                $.ajax({
+                    url: '/api/webpush/unsubscribe',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ endpoint: endpoint }),
+                    success: function() {
+                        self.updateUIStatus(false);
+                        alert('Push alerts disabled for this device.');
+                    }
+                });
+            });
+        },
+
+        sendTestNotification: function() {
+            var endpoint = this.sub ? this.sub.endpoint : null;
+            $.ajax({
+                url: '/api/webpush/test',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ endpoint: endpoint }),
+                success: function() {
+                    alert('Test notification requested! Check your device lockscreen.');
+                },
+                error: function() {
+                    alert('Failed to trigger test notification.');
+                }
+            });
+        },
+
+        loadPreferences: function() {
+            $.getJSON('/api/webpush/preferences', function(res) {
+                if (res && res.preferences) {
+                    var prefs = res.preferences;
+                    for (var key in prefs) {
+                        var el = document.getElementById('pref-' + key);
+                        if (el) {
+                            el.checked = !!prefs[key];
+                        }
+                    }
+                }
+            });
+        },
+
+        savePreferences: function() {
+            var keys = ['notify_outage', 'notify_exercise', 'notify_error', 'notify_warning', 'notify_off_manual', 'notify_fuel', 'notify_pi_state', 'notify_sw_update', 'notify_info'];
+            var payload = {};
+            keys.forEach(function(k) {
+                var el = document.getElementById('pref-' + k);
+                if (el) {
+                    payload[k] = el.checked;
+                }
+            });
+            $.ajax({
+                url: '/api/webpush/preferences',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify(payload),
+                success: function() {
+                    alert('Notification preferences saved successfully!');
+                },
+                error: function() {
+                    alert('Error saving notification preferences.');
+                }
+            });
+        }
+    };
+
+    $(document).ready(function() {
+        window.GenmonPWA.init();
+        window.GenmonPWA.loadPreferences();
+    });
+
+})();
