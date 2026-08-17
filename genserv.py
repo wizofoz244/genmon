@@ -7543,8 +7543,20 @@ if __name__ == "__main__":
 
     for ConfigFile in ConfigFileList:
         if not os.path.isfile(ConfigFile):
-            LogConsole("Missing config file : " + ConfigFile)
-            sys.exit(1)
+            if ConfigFile == GENWEBPUSH_CONFIG:
+                try:
+                    import shutil
+                    src_cfg = os.path.join(file_root, "conf", "genwebpush.conf")
+                    if os.path.isfile(src_cfg):
+                        shutil.copyfile(src_cfg, ConfigFile)
+                    else:
+                        with open(ConfigFile, "w") as f_new:
+                            f_new.write("[genwebpush]\nnotify_outage = True\nnotify_exercise = True\nnotify_error = True\nnotify_warning = True\nnotify_off_manual = True\nnotify_fuel = True\nnotify_pi_state = True\nnotify_sw_update = True\nnotify_info = True\n")
+                except Exception:
+                    pass
+            if not os.path.isfile(ConfigFile):
+                LogConsole("Missing config file : " + ConfigFile)
+                sys.exit(1)
 
     ConfigFiles = {}
     for ConfigFile in ConfigFileList:
