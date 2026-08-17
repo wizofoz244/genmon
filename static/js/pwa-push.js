@@ -186,6 +186,51 @@
             });
         },
 
+        loadSubscribedDevices: function() {
+            $.ajax({
+                url: '/api/webpush/subscriptions',
+                type: 'GET',
+                success: function(res) {
+                    var container = $('#pwa-subscribed-devices-list');
+                    if (!container.length) return;
+                    if (res && res.status === 'ok' && res.subscriptions && res.subscriptions.length > 0) {
+                        var html = '<table class="table table-sm text-white" style="margin:0; font-size:0.85rem;">';
+                        html += '<thead><tr><th>Device / Browser</th><th>Push Service</th><th>Action</th></tr></thead><tbody>';
+                        res.subscriptions.forEach(function(s) {
+                            html += '<tr>';
+                            html += '<td><strong>' + (s.device_type || 'Web Device') + '</strong></td>';
+                            html += '<td><span class="badge bg-secondary">' + (s.service || 'Web Push') + '</span></td>';
+                            html += '<td><button class="btn btn-danger btn-sm text-nowrap" style="padding:1px 6px; font-size:0.75rem;" onclick="window.GenmonPWA.removeDevice(\'' + s.endpoint + '\')">Remove</button></td>';
+                            html += '</tr>';
+                        });
+                        html += '</tbody></table>';
+                        container.html(html);
+                    } else {
+                        container.html('<div style="color: #94a3b8; text-align: center; padding: 10px;">No registered push devices.</div>');
+                    }
+                },
+                error: function() {
+                    $('#pwa-subscribed-devices-list').html('<div style="color: #ef4444; text-align: center; padding: 10px;">Could not load devices.</div>');
+                }
+            });
+        },
+
+        removeDevice: function(endpoint) {
+            var self = this;
+            if (confirm('Remove this push notification device?')) {
+                $.ajax({
+                    url: '/api/webpush/unsubscribe',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ endpoint: endpoint }),
+                    success: function() {
+                        self.loadSubscribedDevices();
+                        self.checkSubscriptionState();
+                    }
+                });
+            }
+        },
+
         savePreferences: function() {
             var keys = ['notify_outage', 'notify_exercise', 'notify_error', 'notify_warning', 'notify_off_manual', 'notify_fuel', 'notify_pi_state', 'notify_sw_update', 'notify_info'];
             var payload = {};
@@ -213,6 +258,7 @@
     $(document).ready(function() {
         window.GenmonPWA.init();
         window.GenmonPWA.loadPreferences();
+        window.GenmonPWA.loadSubscribedDevices();
     });
 
 })();
