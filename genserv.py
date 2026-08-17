@@ -1015,11 +1015,26 @@ def get_script_logs_json():
     if not watchdog_log:
         watchdog_log = read_log_file("/var/log/net-watchdog.log")
 
+    webpush_paths = [
+        "/var/log/genwebpush.log",
+        "/etc/genmon/genwebpush.log",
+        "/home/genmonpi/genmon/genwebpush.log",
+        "./genwebpush.log",
+    ]
+    webpush_log = None
+    for p in webpush_paths:
+        if os.path.exists(p):
+            webpush_log = read_log_file(p)
+            break
+    if not webpush_log:
+        webpush_log = read_log_file("/var/log/genwebpush.log")
+
     return {
         "sync_log": sync_log,
         "backup_log": backup_log,
         "sdcard_backup_log": sd_log,
         "net_watchdog_log": watchdog_log,
+        "genwebpush_log": webpush_log,
     }
 
 
@@ -1051,6 +1066,12 @@ def clear_script_log_json(log_type):
             "/home/genmonpi/net-watchdog.log",
             "/etc/genmon/net-watchdog.log",
             "./net-watchdog.log",
+        ],
+        "webpush": [
+            "/var/log/genwebpush.log",
+            "/etc/genmon/genwebpush.log",
+            "/home/genmonpi/genmon/genwebpush.log",
+            "./genwebpush.log",
         ],
     }
 
@@ -7330,6 +7351,23 @@ def webpush_unsubscribe():
         return jsonify(status="error", message=str(e1)), 500
 
 
+@app.route("/api/webpush/update_name", methods=["POST"])
+def webpush_update_name():
+    try:
+        if not HasWriteAccess():
+            return jsonify(status="error", message="Unauthorized: Write access required"), 403
+        data = request.get_json(force=True, silent=True) or {}
+        endpoint = data.get("endpoint")
+        new_name = data.get("device_name")
+        if endpoint and new_name:
+            from addon.genwebpush import UpdateSubscriptionName
+            UpdateSubscriptionName(endpoint, new_name)
+        return jsonify(status="ok")
+    except Exception as e1:
+        LogErrorLine("Error updating webpush device name: " + str(e1))
+        return jsonify(status="error", message=str(e1)), 500
+
+
 @app.route("/api/webpush/subscriptions", methods=["GET"])
 def webpush_subscriptions():
     try:
@@ -7356,7 +7394,7 @@ def webpush_preferences():
             data = request.get_json(force=True, silent=True) or {}
             for key in ["notify_outage", "notify_exercise", "notify_error", "notify_warning", "notify_off_manual", "notify_fuel", "notify_pi_state", "notify_sw_update", "notify_info"]:
                 if key in data:
-                    config_obj.WriteValue(key, bool(data[key]))
+                    config_obj.WriteValue(key, str(bool(data[key])))
             return jsonify(status="ok")
         else:
             prefs = {}
@@ -7376,12 +7414,14 @@ def webpush_test():
         data = request.get_json(force=True, silent=True) or {}
         endpoint = data.get("endpoint")
         from addon.genwebpush import SendWebPushPayload
-        SendWebPushPayload(
+        ok, err_msg = SendWebPushPayload(
             "⚡ Genmon Test Push Alert",
             "This is a test notification from your Genmon PWA!",
             category="info",
             target_endpoint=endpoint
         )
+        if not ok:
+            return jsonify(status="error", message=err_msg or "Push delivery failed"), 400
         return jsonify(status="ok")
     except Exception as e1:
         LogErrorLine("Error sending webpush test: " + str(e1))

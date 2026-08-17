@@ -1,4 +1,6 @@
-// pwa-push.js: Client-side Web Push notification subscription & preference management for Genmon PWA
+// -------------------------------------------------------------------------------
+// PWA & Web Push Notification Handler v1.2.0 (Includes Inline Device Rename & WebPush Log)
+// -------------------------------------------------------------------------------
 
 (function() {
     'use strict';
@@ -219,13 +221,18 @@
                     if (!container.length) return;
                     if (res && res.status === 'ok' && res.subscriptions && res.subscriptions.length > 0) {
                         var html = '<table class="table table-sm text-white" style="margin:0; font-size:0.85rem;">';
-                        html += '<thead><tr><th>Device / Name</th><th>Push Service</th><th>Action</th></tr></thead><tbody>';
+                        html += '<thead><tr><th>Device / Name</th><th>Push Service</th><th>Actions</th></tr></thead><tbody>';
                         res.subscriptions.forEach(function(s) {
                             var nameDisplay = s.device_name || s.device_type || 'Web Device';
+                            var escName = nameDisplay.replace(/'/g, "\\'");
+                            var escEndpoint = s.endpoint.replace(/'/g, "\\'");
                             html += '<tr>';
                             html += '<td><strong>' + nameDisplay + '</strong></td>';
                             html += '<td><span class="badge bg-secondary">' + (s.service || 'Web Push') + '</span></td>';
-                            html += '<td><button class="btn btn-danger btn-sm text-nowrap" style="padding:1px 6px; font-size:0.75rem;" onclick="window.GenmonPWA.removeDevice(\'' + s.endpoint + '\')">Remove</button></td>';
+                            html += '<td>';
+                            html += '<button class="btn btn-outline-light btn-sm text-nowrap" style="padding:1px 6px; font-size:0.75rem; margin-right:4px;" onclick="window.GenmonPWA.updateDeviceName(\'' + escEndpoint + '\', \'' + escName + '\')">✏️ Edit</button>';
+                            html += '<button class="btn btn-danger btn-sm text-nowrap" style="padding:1px 6px; font-size:0.75rem;" onclick="window.GenmonPWA.removeDevice(\'' + escEndpoint + '\')">Remove</button>';
+                            html += '</td>';
                             html += '</tr>';
                         });
                         html += '</tbody></table>';
@@ -238,6 +245,22 @@
                     $('#pwa-subscribed-devices-list').html('<div style="color: #ef4444; text-align: center; padding: 10px;">Could not load devices.</div>');
                 }
             });
+        },
+
+        updateDeviceName: function(endpoint, currentName) {
+            var self = this;
+            var newName = prompt('Enter a custom name for this device:', currentName || '');
+            if (newName && newName.trim() !== '') {
+                $.ajax({
+                    url: '/api/webpush/update_name',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ endpoint: endpoint, device_name: newName.trim() }),
+                    success: function() {
+                        self.loadSubscribedDevices();
+                    }
+                });
+            }
         },
 
         removeDevice: function(endpoint) {

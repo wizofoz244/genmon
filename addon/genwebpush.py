@@ -152,15 +152,19 @@ def AddSubscription(sub_data):
     endpoint = sub_data.get("endpoint")
     if not endpoint:
         return False
+    dev_name = sub_data.get("device_name") or "Web Device"
+    InitConfigIfNeeded()
     with sub_lock:
         # Avoid duplicates
         subscriptions = [s for s in subscriptions if s.get("endpoint") != endpoint]
         subscriptions.append(sub_data)
     SaveSubscriptions()
+    if log: log.info(f"Registered new Web Push subscription for device: '{dev_name}' (Endpoint: {endpoint[:45]}...)")
     return True
 
 def RemoveSubscription(endpoint, notify_device=True):
     global subscriptions
+    InitConfigIfNeeded()
     if notify_device and endpoint:
         try:
             SendWebPushPayload(
@@ -175,6 +179,22 @@ def RemoveSubscription(endpoint, notify_device=True):
     with sub_lock:
         subscriptions = [s for s in subscriptions if s.get("endpoint") != endpoint]
     SaveSubscriptions()
+    if log: log.info(f"Unsubscribed Web Push endpoint: {endpoint[:45]}...")
+
+def UpdateSubscriptionName(endpoint, new_name):
+    global subscriptions
+    if not endpoint or not new_name:
+        return False
+    InitConfigIfNeeded()
+    new_name = new_name.strip()
+    with sub_lock:
+        for s in subscriptions:
+            if s.get("endpoint") == endpoint:
+                s["device_name"] = new_name
+                break
+    SaveSubscriptions()
+    if log: log.info(f"Updated device name to '{new_name}' for endpoint {endpoint[:45]}...")
+    return True
 
 def GetSubscriptionsList():
     InitConfigIfNeeded()
@@ -237,15 +257,16 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
 
         targets = subscriptions if not target_endpoint else [s for s in subscriptions if s.get("endpoint") == target_endpoint]
         if not targets:
-            if log: log.info("No web push subscriptions registered.")
-            return True
+            if log: log.info("No active Web Push subscriptions targetable for payload: " + str(title))
+            return True, None
 
         if not webpush:
-            if log: log.warning("pywebpush library is missing. Installing pywebpush package is required for encrypted push dispatch.")
+            if log: log.warning("pywebpush library missing. RFC 8292 Web Push Encryption requires pywebpush package.")
 
-        to_remove = []
+        push_errors = []
         for sub in list(targets):
             endpoint = sub.get("endpoint")
+            dev_label = sub.get("device_name") or "Device"
             if not endpoint:
                 continue
             try:
@@ -259,9 +280,10 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
                             "icon": icon
                         }),
                         vapid_private_key=priv,
-                        vapid_claims={"sub": config.ReadValue("vapid_claims_sub", default="mailto:admin@genmon.local")},
+                        vapid_claims={"sub": config.ReadValue("vapid_claims_sub", default="mailto:admin@pony-grouper.ts.net")},
                         ttl=86400
                     )
+                    if log: log.info(f"Successfully dispatched push payload '{title}' to {dev_label} ({endpoint[:40]}...)")
                 else:
                     req = urllib.request.Request(
                         endpoint,
@@ -269,22 +291,26 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
                         headers={"Content-Type": "application/json", "TTL": "86400"}
                     )
                     with urllib.request.urlopen(req, timeout=10) as resp:
-                        pass
+                        if log: log.info(f"Dispatched raw unencrypted push to {dev_label} ({endpoint[:40]}...)")
             except Exception as ex_push:
                 err_str = str(ex_push)
+                push_errors.append(err_str)
                 if "404" in err_str or "410" in err_str:
                     to_remove.append(endpoint)
+                    if log: log.warning(f"Push endpoint expired (404/410) for {dev_label}: {endpoint[:45]}...")
                 else:
-                    if log: log.error("Failed to send push to endpoint " + str(endpoint) + ": " + err_str)
-                    if console: console.error("Failed to send push to endpoint " + str(endpoint) + ": " + err_str)
+                    if log: log.error(f"Failed to send push to {dev_label} ({endpoint[:45]}...): {err_str}")
+                    if console: console.error(f"Failed to send push to {dev_label}: {err_str}")
 
         for ep in to_remove:
-            RemoveSubscription(ep)
+            RemoveSubscription(ep, notify_device=False)
 
-        return True
+        if push_errors and len(push_errors) == len(targets):
+            return False, "; ".join(push_errors)
+        return True, None
     except Exception as e:
         if log: log.error("Error in SendWebPushPayload: " + str(e))
-        return False
+        return False, str(e)
 
 # Event Handlers
 def OnOutage(Active):
