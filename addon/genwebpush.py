@@ -263,6 +263,7 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
         if not webpush:
             if log: log.warning("pywebpush library missing. RFC 8292 Web Push Encryption requires pywebpush package.")
 
+        to_remove = []
         push_errors = []
         for sub in list(targets):
             endpoint = sub.get("endpoint")
