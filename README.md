@@ -55,6 +55,8 @@ The software supports the following features:
     - Switch state change
     - Critical or Warning messages from the generator
 - Web based application for viewing status of the generator
+- Native PWA Web Push Notifications with RFC 8292 VAPID encryption (lockscreen alerts on iOS, Android, macOS, Windows without third-party SaaS accounts)
+- Process and daemon status verification tool (`./startgenmon.sh status` with ANSI traffic light status indicators)
 - Limited and Full Rights login for web interface
 - SMS notifications of Generator state and power outages (via Twilio SMS API or Expansion Cellular Modem)
 - Push notifications (via pushover.net, slack)
@@ -146,3 +148,5 @@ alt="Genmon Demo" width="240" height="180" border="10" /></a>
 
 # Documentation
 * [Genmon Project Wiki](https://github.com/jgyates/genmon/wiki)
+* [PWA Web Push Architecture & Walkthrough Guide](walkthrough.md)
+* [Complete Setup, Backup & Deployment Guide](DEPLOYMENT_GUIDE.md)
