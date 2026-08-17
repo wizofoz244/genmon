@@ -157,6 +157,7 @@ debug = False
 AppPath = ""
 favicon = "favicon.ico"
 ConfigFilePath = ProgramDefaults.ConfPath
+GENWEBPUSH_CONFIG = os.path.join(ConfigFilePath, "genwebpush.conf")
 
 MAIL_SECTION = "MyMail"
 GENMON_SECTION = "GenMon"
@@ -7332,10 +7333,11 @@ def webpush_unsubscribe():
 @app.route("/api/webpush/preferences", methods=["GET", "POST"])
 def webpush_preferences():
     try:
-        config_obj = ConfigFiles.get(GENWEBPUSH_CONFIG)
+        cfg_file = GENWEBPUSH_CONFIG if ("GENWEBPUSH_CONFIG" in globals() and GENWEBPUSH_CONFIG) else os.path.join(ConfigFilePath, "genwebpush.conf")
+        config_obj = ConfigFiles.get(cfg_file)
         if not config_obj:
-            config_obj = MyConfig(filename=GENWEBPUSH_CONFIG, section="genwebpush", log=log)
-            ConfigFiles[GENWEBPUSH_CONFIG] = config_obj
+            config_obj = MyConfig(filename=cfg_file, section="genwebpush", log=log)
+            ConfigFiles[cfg_file] = config_obj
 
         if request.method == "POST":
             if not HasWriteAccess():
