@@ -134,12 +134,23 @@
 
         getDefaultDeviceName: function() {
             var ua = navigator.userAgent;
-            if (/android/i.test(ua)) return 'Android Phone';
+            var match;
+            if (/android/i.test(ua)) {
+                match = ua.match(/;\s*([^;]+)\s+Build\//i);
+                return match ? match[1] + ' (Android)' : 'Android Phone';
+            }
             if (/iphone/i.test(ua)) return "iPhone";
             if (/ipad/i.test(ua)) return "iPad";
             if (/macintosh|mac os/i.test(ua)) return "Mac Desktop";
             if (/windows/i.test(ua)) return "Windows PC";
             return "Web Browser";
+        },
+
+        autoFillDeviceName: function() {
+            var el = $('#webpush-device-name');
+            if (el.length && !el.val()) {
+                el.val(this.getDefaultDeviceName());
+            }
         },
 
         unsubscribe: function() {
@@ -273,6 +284,7 @@
         window.GenmonPWA.init();
         window.GenmonPWA.loadPreferences();
         window.GenmonPWA.loadSubscribedDevices();
+        window.GenmonPWA.autoFillDeviceName();
     });
 
 })();
