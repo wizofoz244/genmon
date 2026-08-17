@@ -111,7 +111,12 @@
                         alert('Success! Web Push alerts enabled for this device.');
                     }).catch(function(err) {
                         console.error('Subscription error:', err);
-                        alert('Push Subscription error: ' + (err.message || err));
+                        var isRawIp = /^(\d{1,3}\.){3}\d{1,3}$/.test(location.hostname);
+                        if (location.protocol === 'https:' && isRawIp) {
+                            alert('Chrome Security Notice:\n\nChrome blocks Service Workers and Web Push on self-signed IP addresses (https://' + location.hostname + ').\n\nTo enable Web Push, please access Genmon via your Tailscale HTTPS domain (e.g. https://genmon.your-tailnet.ts.net) or HTTP.');
+                        } else {
+                            alert('Push Subscription error: ' + (err.message || err));
+                        }
                     });
                 }).fail(function(xhr, status, err) {
                     alert('Failed to reach VAPID key endpoint: ' + (err || status));
