@@ -33,6 +33,14 @@ class TestWebPushIntegration(unittest.TestCase):
         self.assertTrue(hasattr(genserv, "serve_sw"))
         self.assertTrue(hasattr(genserv, "serve_manifest"))
 
+    @patch("genserv.HasWriteAccess", return_value=True)
+    def test_webpush_preferences_direct_execution(self, mock_write) -> None:
+        """Verify webpush_preferences handler executes directly without NameErrors or exceptions."""
+        with patch("genserv.request") as mock_req:
+            mock_req.method = "GET"
+            res = genserv.webpush_preferences()
+            self.assertIsNotNone(res)
+
     @patch("addon.genwebpush.config")
     def test_ensure_vapid_keys(self, mock_config) -> None:
         """Verify VAPID key generation and retrieval."""
