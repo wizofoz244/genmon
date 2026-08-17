@@ -65,10 +65,52 @@ fi
 }
 
 #-------------------------------------------------------------------------------
+function verify_and_show_status() {
+  echo ""
+  echo "=================================================================="
+  echo "           🚦 Genmon System Process Status Verification           "
+  echo "=================================================================="
+  sleep 3
+
+  local core_procs=("genloader.py" "genmon.py" "genserv.py")
+  local all_procs=("genloader.py" "genmon.py" "genserv.py" "genwebpush.py" "genpushover.py" "genmqtt.py" "gengpio.py")
+  local failed_count=0
+  local running_count=0
+
+  for proc in "${all_procs[@]}"; do
+    local pids=$(pgrep -f "$proc" 2>/dev/null | tr '\n' ' ')
+    if [ -n "$pids" ]; then
+      printf "  %-20s 🟢 [ \033[1;32mRUNNING\033[0m ]  (PID: %s)\n" "$proc" "$pids"
+      running_count=$((running_count + 1))
+    else
+      if [[ " ${core_procs[*]} " =~ " ${proc} " ]]; then
+        printf "  %-20s 🔴 [ \033[1;31mSTOPPED / FAILED\033[0m ]\n" "$proc"
+        failed_count=$((failed_count + 1))
+      else
+        printf "  %-20s ⚪ [ \033[0;37mINACTIVE / OFF\033[0m ]\n" "$proc"
+      fi
+    fi
+  done
+
+  echo "=================================================================="
+  if [ $failed_count -gt 0 ]; then
+    echo " 🔴 WARNING: $failed_count core process(es) failed to start or remain running."
+    if [ -f "/var/log/genserv.log" ]; then
+      echo ""
+      echo " --- Last 5 lines from /var/log/genserv.log ---"
+      tail -n 5 /var/log/genserv.log 2>/dev/null
+    fi
+  else
+    echo " 🟢 Status Verification Complete: $running_count process(es) active and running."
+  fi
+  echo ""
+}
+
+#-------------------------------------------------------------------------------
 function printhelp(){
   echo "usage: "
   echo " "
-  echo "./startgenmon.sh <options> start|stop|restart|hardstop"
+  echo "./startgenmon.sh <options> start|stop|restart|hardstop|status"
   echo ""
   echo "valid options:"
   echo "   -h      display help"
@@ -112,32 +154,38 @@ checkmanagedpackages
 for val in $PARAMS; do
   case "$val" in
     start)
-      echo "Starting genmon python scripts"
+      echo "Starting genmon python scripts..."
       env_activate
       found_action=true
       sudo $pythoncommand "$genmondir/genloader.py" -s $config_path
       env_deactivate
+      verify_and_show_status
       ;;
     stop)
       found_action=true
       env_activate
-      echo "Stopping genmon python scripts"
+      echo "Stopping genmon python scripts..."
       sudo $pythoncommand "$genmondir/genloader.py" -x $config_path
       env_deactivate
       ;;
     hardstop)
       found_action=true
       env_activate
-      echo "Hard Stopping genmon python scripts"
+      echo "Hard Stopping genmon python scripts..."
       sudo $pythoncommand "$genmondir/genloader.py" -z $config_path
       env_deactivate
       ;;
     restart)
       found_action=true
       env_activate
-      echo "Restarting genmon python scripts"
+      echo "Restarting genmon python scripts..."
       sudo $pythoncommand "$genmondir/genloader.py" -r $config_path
       env_deactivate
+      verify_and_show_status
+      ;;
+    status)
+      found_action=true
+      verify_and_show_status
       ;;
     *)
       #
@@ -147,7 +195,7 @@ for val in $PARAMS; do
 done
 
 if [ "$found_action" = false ] ; then
-  echo "Invalid command. Valid commands are start, stop, restart or hardstop."
+  echo "Invalid command. Valid commands are start, stop, restart, hardstop or status."
 fi
 
 exit 0
