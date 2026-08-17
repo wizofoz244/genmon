@@ -5477,6 +5477,13 @@ var Pages = {
       h += '</div>' +
         '<div class="form-actions" style="border:none;margin-top:12px">' +
         '<button class="btn btn-sm btn-outline" id="n-add">'+btnIcon('plus')+' Add Recipient</button></div></div></div>';
+      
+      /* Web Push Notifications (PWA) Card */
+      h += '<div class="card" style="margin-top:16px"><div class="card-header">'+btnIcon('notifications')+' Mobile App &amp; Web Push Notifications (PWA)</div><div class="card-body">' +
+        '<p style="margin-bottom:12px;color:var(--text-muted)">Configure real-time push alerts and trigger preferences for your iOS (16.4+) or Android PWA home screen app.</p>' +
+        '<button class="btn btn-primary btn-sm" type="button" onclick="document.getElementById(\'pwa-push-modal\').classList.remove(\'hidden\')">' +
+        btnIcon('settings',14)+' Configure Push Alert Preferences</button></div></div>';
+
       h += '<div class="set-save-bar"><button class="btn btn-success" id="n-save">'+btnIcon('save')+' Save Settings</button></div>';
       h += '</div>';
       h += '</div>'; /* close #set-panels */

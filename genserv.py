@@ -414,6 +414,23 @@ def serve_svg(filename):
     return send_from_directory(os.path.join(app.root_path, "static", "svg"), filename)
 
 
+@app.route("/sw.js")
+@app.route("/static/sw.js")
+def serve_sw():
+    response = send_from_directory(app.static_folder, "sw.js", mimetype="application/javascript")
+    response.headers["Service-Worker-Allowed"] = "/"
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
+
+
+@app.route("/manifest.webmanifest")
+@app.route("/static/manifest.webmanifest")
+def serve_manifest():
+    response = send_from_directory(app.static_folder, "manifest.webmanifest", mimetype="application/manifest+json")
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
+
+
 # -------------------------------------------------------------------------------
 @app.route("/", methods=["GET"])
 def root():
@@ -7249,6 +7266,88 @@ def passkey_login_complete():
         LogErrorLine("Error in passkey_login_complete: " + str(e1))
         CheckFailedLogin()
         return jsonify(error="Passkey verification failed"), 500
+
+
+# ---------------------WebPush API Endpoints--------------------------------------
+@app.route("/api/webpush/vapid_key", methods=["GET"])
+def webpush_vapid_key():
+    try:
+        from addon.genwebpush import EnsureVapidKeys
+        pub, _ = EnsureVapidKeys()
+        return jsonify(status="ok", public_key=pub)
+    except Exception as e1:
+        LogErrorLine("Error getting VAPID public key: " + str(e1))
+        return jsonify(status="error", message=str(e1)), 500
+
+
+@app.route("/api/webpush/subscribe", methods=["POST"])
+def webpush_subscribe():
+    try:
+        sub_data = request.get_json(force=True, silent=True) or {}
+        if not sub_data or "endpoint" not in sub_data:
+            return jsonify(status="error", message="Invalid subscription payload"), 400
+        from addon.genwebpush import AddSubscription
+        AddSubscription(sub_data)
+        return jsonify(status="ok")
+    except Exception as e1:
+        LogErrorLine("Error saving webpush subscription: " + str(e1))
+        return jsonify(status="error", message=str(e1)), 500
+
+
+@app.route("/api/webpush/unsubscribe", methods=["POST"])
+def webpush_unsubscribe():
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        endpoint = data.get("endpoint")
+        if endpoint:
+            from addon.genwebpush import RemoveSubscription
+            RemoveSubscription(endpoint)
+        return jsonify(status="ok")
+    except Exception as e1:
+        LogErrorLine("Error removing webpush subscription: " + str(e1))
+        return jsonify(status="error", message=str(e1)), 500
+
+
+@app.route("/api/webpush/preferences", methods=["GET", "POST"])
+def webpush_preferences():
+    try:
+        config_obj = ConfigFiles.get(GENWEBPUSH_CONFIG)
+        if not config_obj:
+            config_obj = MyConfig(filename=GENWEBPUSH_CONFIG, section="genwebpush", log=log)
+            ConfigFiles[GENWEBPUSH_CONFIG] = config_obj
+
+        if request.method == "POST":
+            data = request.get_json(force=True, silent=True) or {}
+            for key in ["notify_outage", "notify_exercise", "notify_error", "notify_warning", "notify_off_manual", "notify_fuel", "notify_pi_state", "notify_sw_update", "notify_info"]:
+                if key in data:
+                    config_obj.WriteValue(key, bool(data[key]))
+            return jsonify(status="ok")
+        else:
+            prefs = {}
+            for key in ["notify_outage", "notify_exercise", "notify_error", "notify_warning", "notify_off_manual", "notify_fuel", "notify_pi_state", "notify_sw_update", "notify_info"]:
+                prefs[key] = config_obj.ReadValue(key, return_type=bool, default=True)
+            return jsonify(status="ok", preferences=prefs)
+    except Exception as e1:
+        LogErrorLine("Error handling webpush preferences: " + str(e1))
+        return jsonify(status="error", message=str(e1)), 500
+
+
+@app.route("/api/webpush/test", methods=["POST"])
+def webpush_test():
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        endpoint = data.get("endpoint")
+        from addon.genwebpush import SendWebPushPayload
+        SendWebPushPayload(
+            "⚡ Genmon Test Push Alert",
+            "This is a test notification from your Genmon PWA!",
+            category="info",
+            target_endpoint=endpoint
+        )
+        return jsonify(status="ok")
+    except Exception as e1:
+        LogErrorLine("Error sending webpush test: " + str(e1))
+        return jsonify(status="error", message=str(e1)), 500
 
 
 # ---------------------SetupMFA--------------------------------------------------

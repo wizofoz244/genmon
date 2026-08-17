@@ -203,62 +203,63 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
 def OnOutage(Active):
     if config.ReadValue("notify_outage", return_type=bool, default=True):
         msg = "Utility Power OUTAGE Detected!" if Active else "Utility Power RESTORED."
-        console.info("WebPush Outage: " + msg)
+        if console: console.info("WebPush Outage: " + msg)
         SendWebPushPayload("Genmon Utility Outage", msg, category="outage")
 
 def OnExercise(Active):
     if config.ReadValue("notify_exercise", return_type=bool, default=True):
         msg = "Generator Started Scheduled Exercise" if Active else "Generator Exercise Finished"
-        console.info("WebPush Exercise: " + msg)
+        if console: console.info("WebPush Exercise: " + msg)
         SendWebPushPayload("Genmon Generator Exercise", msg, category="exercise")
 
 def OnRun(Active):
     if config.ReadValue("notify_exercise", return_type=bool, default=True):
         msg = "Generator is RUNNING" if Active else "Generator Stopped Running"
-        console.info("WebPush Run: " + msg)
+        if console: console.info("WebPush Run: " + msg)
         SendWebPushPayload("Genmon Generator Status", msg, category="info")
 
 def OnRunManual(Active):
     if config.ReadValue("notify_off_manual", return_type=bool, default=True):
         msg = "Generator RUNNING in MANUAL Mode!" if Active else "Generator Manual Mode Ended"
-        console.info("WebPush RunManual: " + msg)
+        if console: console.info("WebPush RunManual: " + msg)
         SendWebPushPayload("Genmon Status Warning", msg, category="warning")
 
 def OnAlarm(Active):
     if config.ReadValue("notify_error", return_type=bool, default=True):
         msg = "ALARM DETECTED on Generator Controller!" if Active else "Generator Alarm Cleared"
-        console.error("WebPush Alarm: " + msg)
+        if console: console.error("WebPush Alarm: " + msg)
         SendWebPushPayload("🚨 Genmon Generator ALARM!", msg, category="error")
 
 def OnService(Active):
     if config.ReadValue("notify_warning", return_type=bool, default=True):
         msg = "Generator Service / Maintenance is DUE!" if Active else "Generator Service Warning Cleared"
-        console.warning("WebPush Service: " + msg)
-        SendWebPushPayload("🔧 Genmon Service Warning", msg, category="warning")
+        msg = "Generator Service Maintenance REQUIRED!" if Active else "Generator Service Cleared"
+        if console: console.info("WebPush Maintenance: " + msg)
+        SendWebPushPayload("Genmon Service Due", msg, category="warning")
 
 def OnOff(Active):
     if config.ReadValue("notify_off_manual", return_type=bool, default=True):
-        msg = "CRITICAL: Generator Switch set to OFF Mode!" if Active else "Generator OFF Mode Cleared"
-        console.warning("WebPush Off: " + msg)
-        SendWebPushPayload("📴 Genmon Switch Alert", msg, category="warning")
+        msg = "Generator Switch Set to OFF!" if Active else "Generator Switch Returned from OFF"
+        if console: console.info("WebPush Switch OFF: " + msg)
+        SendWebPushPayload("Genmon Switch Off Warning", msg, category="off_manual")
 
 def OnManual(Active):
     if config.ReadValue("notify_off_manual", return_type=bool, default=True):
-        msg = "WARNING: Generator Switch set to MANUAL Mode!" if Active else "Generator MANUAL Mode Cleared"
-        console.warning("WebPush Manual: " + msg)
-        SendWebPushPayload("⚠️ Genmon Switch Alert", msg, category="warning")
+        msg = "Generator Switch Set to MANUAL!" if Active else "Generator Switch Returned from MANUAL"
+        if console: console.info("WebPush Switch MANUAL: " + msg)
+        SendWebPushPayload("Genmon Switch Manual Warning", msg, category="off_manual")
 
 def OnSoftwareUpdate(Active):
     if config.ReadValue("notify_sw_update", return_type=bool, default=True):
-        msg = "New Genmon Software Update Available!" if Active else "Software Up to Date"
-        console.info("WebPush SWUpdate: " + msg)
-        SendWebPushPayload("Genmon Software Update", msg, category="info")
+        msg = "Genmon Software Update Available!" if Active else "Genmon Software Up-to-Date"
+        if console: console.info("WebPush Update Notice: " + msg)
+        SendWebPushPayload("Genmon Software Update", msg, category="sw_update")
 
 def OnFuelState(Active):
     if config.ReadValue("notify_fuel", return_type=bool, default=True):
-        msg = "LOW FUEL WARNING Level Reached!" if Active else "Fuel Warning Cleared"
-        console.warning("WebPush Fuel: " + msg)
-        SendWebPushPayload("⛽ Genmon Fuel Alert", msg, category="warning")
+        msg = "Fuel Level Warning!" if Active else "Fuel Level Normal"
+        if console: console.info("WebPush Fuel State: " + msg)
+        SendWebPushPayload("Genmon Fuel Warning", msg, category="fuel")
 
 def OnPiState(Active):
     if config.ReadValue("notify_pi_state", return_type=bool, default=True):

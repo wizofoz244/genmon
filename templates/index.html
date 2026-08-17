@@ -158,6 +158,12 @@
                             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
                         </svg>
                     </button>
+                    <button id="pwa-push-btn" class="header-btn" aria-label="Push Alert Settings" title="Push Alert Settings" onclick="document.getElementById('pwa-push-modal').classList.remove('hidden')">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+                        </svg>
+                    </button>
                     <button id="logout-btn" class="header-btn" aria-label="Log out" title="Log out / Purge Cache">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -191,6 +197,64 @@
     <!-- Modal container -->
     <div id="modal-overlay" class="modal-overlay hidden"></div>
 
+    <!-- PWA Push Notifications Preferences Modal -->
+    <div id="pwa-push-modal" class="modal-overlay hidden">
+        <div class="modal-content" style="max-width: 500px; padding: 20px; border-radius: 12px; background: #111a2e; color: #fff; margin: 40px auto; position: relative; z-index: 10000;">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px solid #1e293b; padding-bottom: 10px; margin-bottom: 15px;">
+                <h3 style="margin: 0; font-size: 1.25rem;">📱 Push Alert Preferences</h3>
+                <button type="button" onclick="document.getElementById('pwa-push-modal').classList.add('hidden')" style="background:none; border:none; color:#94a3b8; font-size:1.5rem; cursor:pointer;">&times;</button>
+            </div>
+            <div style="margin-bottom: 15px; display:flex; justify-content:space-between; align-items:center; background:#1e293b; padding:10px 14px; border-radius:8px;">
+                <div>
+                    <strong>Status:</strong> <span id="webpush-status-label" class="badge bg-secondary">Checking...</span>
+                </div>
+                <div>
+                    <button id="btn-webpush-toggle" type="button" onclick="window.GenmonPWA.togglePush()" class="btn btn-primary btn-sm">Enable Push Alerts</button>
+                    <button type="button" onclick="window.GenmonPWA.sendTestNotification()" class="btn btn-outline-info btn-sm" style="margin-left: 5px;">Test</button>
+                </div>
+            </div>
+            <h4 style="font-size: 1rem; margin-bottom: 10px; border-bottom: 1px solid #1e293b; padding-bottom: 5px;">Trigger Event Options</h4>
+            <div style="display:flex; flex-direction:column; gap:10px; max-height: 250px; overflow-y: auto; margin-bottom: 15px;">
+                <label style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
+                    <span>⚡ Power Outage / Utility Restored</span>
+                    <input type="checkbox" id="pref-notify_outage" checked>
+                </label>
+                <label style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
+                    <span>🏋️ Exercise Started / Stopped</span>
+                    <input type="checkbox" id="pref-notify_exercise" checked>
+                </label>
+                <label style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
+                    <span>🚨 Alarms & Controller Errors</span>
+                    <input type="checkbox" id="pref-notify_error" checked>
+                </label>
+                <label style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
+                    <span>🔧 Maintenance Service Required</span>
+                    <input type="checkbox" id="pref-notify_warning" checked>
+                </label>
+                <label style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
+                    <span>📴 Switch Changed to OFF or MANUAL</span>
+                    <input type="checkbox" id="pref-notify_off_manual" checked>
+                </label>
+                <label style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
+                    <span>⛽ Low Fuel Warnings</span>
+                    <input type="checkbox" id="pref-notify_fuel" checked>
+                </label>
+                <label style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
+                    <span>🌡️ Raspberry Pi Hardware Health</span>
+                    <input type="checkbox" id="pref-notify_pi_state" checked>
+                </label>
+                <label style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
+                    <span>ℹ️ Software Updates & System Notices</span>
+                    <input type="checkbox" id="pref-notify_sw_update" checked>
+                </label>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:10px;">
+                <button type="button" onclick="document.getElementById('pwa-push-modal').classList.add('hidden')" class="btn btn-secondary">Close</button>
+                <button type="button" onclick="window.GenmonPWA.savePreferences()" class="btn btn-success">Save Preferences</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Scripts -->
     <script src="js/jquery-4.0.0.min.js?v={{ asset_ver('js/jquery-4.0.0.min.js') }}"></script>
     <script src="js/jquery.qrcode.min.js?v={{ asset_ver('js/jquery.qrcode.min.js') }}"></script>
@@ -198,6 +262,7 @@
     <script src="js/gauges.js?v={{ asset_ver('js/gauges.js') }}"></script>
     <script src="js/genmon.js?v={{ asset_ver('js/genmon.js') }}"></script>
     <script defer src="js/addon-icons.js?v={{ asset_ver('js/addon-icons.js') }}"></script>
+    <script src="js/pwa-push.js?v={{ asset_ver('js/pwa-push.js') }}"></script>
     <!-- Register SW only in installed PWA mode to avoid stale-cache issues in browsers.
          In normal browser sessions, unregister any prior SW so users get fresh files. -->
     <script>
