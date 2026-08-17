@@ -111,7 +111,9 @@
                         });
                     }).then(function() {
                         self.updateUIStatus(true);
-                        self.loadSubscribedDevices();
+                        if (window.GenmonPWA && typeof window.GenmonPWA.loadSubscribedDevices === 'function') {
+                            window.GenmonPWA.loadSubscribedDevices();
+                        }
                         alert('Success! Web Push alerts enabled for this device.');
                     }).catch(function(err) {
                         console.error('Subscription error:', err);
@@ -141,7 +143,9 @@
                     data: JSON.stringify({ endpoint: endpoint }),
                     success: function() {
                         self.updateUIStatus(false);
-                        self.loadSubscribedDevices();
+                        if (window.GenmonPWA && typeof window.GenmonPWA.loadSubscribedDevices === 'function') {
+                            window.GenmonPWA.loadSubscribedDevices();
+                        }
                     }
                 });
             });
