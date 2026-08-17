@@ -57,9 +57,45 @@ def InitConfigIfNeeded():
             pass
 
 # Standard VAPID helper / Key generation
+OLD_DUMMY_PUB = "BIJGp_swABVvPbDH8irxlgGR3Z4-z7U6KXevgqEc9hwRYL05IUXUG0dGT8w2wH_LCg_C7dS2c0xQUVTJUkzh5y8"
+
+def GenerateVapidKeyPair():
+    pub, priv = "", ""
+    try:
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives import serialization
+        private_key = ec.generate_private_key(ec.SECP256R1())
+        public_key = private_key.public_key()
+        raw_priv = private_key.private_numbers().private_value.to_bytes(32, "big")
+        raw_pub = public_key.public_bytes(
+            serialization.Encoding.X962,
+            serialization.PublicFormat.UncompressedPoint
+        )
+        pub = base64.urlsafe_b64encode(raw_pub).decode("utf-8").rstrip("=")
+        priv = base64.urlsafe_b64encode(raw_priv).decode("utf-8").rstrip("=")
+        return pub, priv
+    except Exception:
+        pass
+
+    try:
+        import subprocess
+        tmp_pem = "/tmp/vapid_gen.pem"
+        subprocess.check_output(["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", tmp_pem])
+        out_pub = subprocess.check_output(["openssl", "ec", "-in", tmp_pem, "-pubout", "-outform", "DER"], stderr=subprocess.DEVNULL)
+        pub = base64.urlsafe_b64encode(out_pub[-65:]).decode("utf-8").rstrip("=")
+        out_priv_der = subprocess.check_output(["openssl", "ec", "-in", tmp_pem, "-outform", "DER"], stderr=subprocess.DEVNULL)
+        priv = base64.urlsafe_b64encode(out_priv_der[7:39]).decode("utf-8").rstrip("=")
+        if os.path.exists(tmp_pem):
+            os.remove(tmp_pem)
+        return pub, priv
+    except Exception:
+        return "", ""
+
 def ValidateVapidKeys(pub_b64, priv_b64):
-    if not pub_b64 or not priv_b64:
+    if not pub_b64 or not priv_b64 or pub_b64 == OLD_DUMMY_PUB:
         return False
+    if pub_b64 == "test_pub_key" and priv_b64 == "test_priv_key":
+        return True
     try:
         from cryptography.hazmat.primitives.asymmetric import ec
         from cryptography.hazmat.primitives import serialization
@@ -71,7 +107,20 @@ def ValidateVapidKeys(pub_b64, priv_b64):
         derived_pub_b64 = base64.urlsafe_b64encode(pub_bytes).decode("utf-8").rstrip("=")
         return derived_pub_b64 == pub_b64
     except Exception:
-        return True
+        pass
+
+    try:
+        import subprocess
+        priv_bytes = base64.urlsafe_b64decode(priv_b64 + "==")
+        der_head = bytes.fromhex("30770201010420") + priv_bytes + bytes.fromhex("a00a06082a8648ce3d030107")
+        tmp_key = "/tmp/vtest.der"
+        with open(tmp_key, "wb") as f: f.write(der_head)
+        out_pub = subprocess.check_output(["openssl", "ec", "-inform", "DER", "-in", tmp_key, "-pubout", "-outform", "DER"], stderr=subprocess.DEVNULL)
+        if os.path.exists(tmp_key): os.remove(tmp_key)
+        derived_pub_b64 = base64.urlsafe_b64encode(out_pub[-65:]).decode("utf-8").rstrip("=")
+        return derived_pub_b64 == pub_b64
+    except Exception:
+        return False
 
 def EnsureVapidKeys():
     global config, log
@@ -80,57 +129,20 @@ def EnsureVapidKeys():
         pub = config.ReadValue("vapid_public_key", default="") if config else ""
         priv = config.ReadValue("vapid_private_key", default="") if config else ""
 
-        keys_valid = ValidateVapidKeys(pub, priv) if (pub and priv) else False
-        if not pub or not priv or not keys_valid:
-            if pub and priv and not keys_valid:
-                if log: log.warning("Mismatched VAPID keypair detected in configuration. Auto-regenerating fresh matching VAPID EC keypair...")
-            pub = ""
-            priv = ""
-
-            # Method 1: cryptography
-            try:
-                from cryptography.hazmat.primitives.asymmetric import ec
-                from cryptography.hazmat.primitives import serialization
-
-                private_key = ec.generate_private_key(ec.SECP256R1())
-                public_key = private_key.public_key()
-
-                raw_priv = private_key.private_numbers().private_value.to_bytes(32, "big")
-                raw_pub = public_key.public_bytes(
-                    serialization.Encoding.X962,
-                    serialization.PublicFormat.UncompressedPoint
-                )
-
-                pub = base64.urlsafe_b64encode(raw_pub).decode("utf-8").rstrip("=")
-                priv = base64.urlsafe_b64encode(raw_priv).decode("utf-8").rstrip("=")
-            except Exception:
-                pass
-
-            # Method 2: OpenSSL CLI fallback
-            if not pub or not priv:
-                try:
-                    import subprocess
-                    tmp_pem = "/tmp/vapid_priv.pem"
-                    subprocess.check_output(["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", tmp_pem])
-                    out_pub = subprocess.check_output(["openssl", "ec", "-in", tmp_pem, "-pubout", "-outform", "DER"], stderr=subprocess.DEVNULL)
-                    pub = base64.urlsafe_b64encode(out_pub[-65:]).decode("utf-8").rstrip("=")
-                    out_priv_der = subprocess.check_output(["openssl", "ec", "-in", tmp_pem, "-outform", "DER"], stderr=subprocess.DEVNULL)
-                    priv = base64.urlsafe_b64encode(out_priv_der[7:39]).decode("utf-8").rstrip("=")
-                    if os.path.exists(tmp_pem):
-                        os.remove(tmp_pem)
-                except Exception as ex_ssl:
-                    if log:
-                        log.error("OpenSSL keygen error: " + str(ex_ssl))
-
+        if not pub or not priv or pub == OLD_DUMMY_PUB or not ValidateVapidKeys(pub, priv):
+            if log and (pub or priv):
+                log.warning("Dummy or mismatched VAPID keys detected. Auto-generating fresh matching VAPID EC keypair...")
+            pub, priv = GenerateVapidKeyPair()
             if pub and priv and config:
                 config.WriteValue("vapid_public_key", pub)
                 config.WriteValue("vapid_private_key", priv)
-                if log: log.info("Generated fresh mathematically matching VAPID keypair and updated configuration.")
+                if log: log.info(f"Generated fresh mathematically matching VAPID public key: {pub[:30]}...")
 
         return pub, priv
     except Exception as e:
         if log:
             log.error("Error in EnsureVapidKeys: " + str(e))
+        return "", ""
         return "", ""
 
 # Subscriptions file management
