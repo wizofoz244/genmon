@@ -207,6 +207,7 @@ def GetSubscriptionsList():
             result.append({
                 "endpoint": endpoint,
                 "user_agent": ua,
+                "device_name": s.get("device_name") or dev_type,
                 "device_type": dev_type,
                 "service": svc,
                 "added_time": s.get("added_time", "")

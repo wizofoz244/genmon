@@ -100,8 +100,10 @@
                         });
                     }).then(function(sub) {
                         self.sub = sub;
+                        var customName = $('#webpush-device-name').val();
                         var subPayload = sub.toJSON();
                         subPayload.user_agent = navigator.userAgent;
+                        subPayload.device_name = customName || self.getDefaultDeviceName();
                         subPayload.added_time = new Date().toISOString();
                         return $.ajax({
                             url: '/api/webpush/subscribe',
@@ -128,6 +130,16 @@
                     alert('Failed to reach VAPID key endpoint: ' + (err || status));
                 });
             });
+        },
+
+        getDefaultDeviceName: function() {
+            var ua = navigator.userAgent;
+            if (/android/i.test(ua)) return 'Android Phone';
+            if (/iphone/i.test(ua)) return "iPhone";
+            if (/ipad/i.test(ua)) return "iPad";
+            if (/macintosh|mac os/i.test(ua)) return "Mac Desktop";
+            if (/windows/i.test(ua)) return "Windows PC";
+            return "Web Browser";
         },
 
         unsubscribe: function() {
@@ -187,6 +199,7 @@
         },
 
         loadSubscribedDevices: function() {
+            var self = this;
             $.ajax({
                 url: '/api/webpush/subscriptions',
                 type: 'GET',
@@ -195,10 +208,11 @@
                     if (!container.length) return;
                     if (res && res.status === 'ok' && res.subscriptions && res.subscriptions.length > 0) {
                         var html = '<table class="table table-sm text-white" style="margin:0; font-size:0.85rem;">';
-                        html += '<thead><tr><th>Device / Browser</th><th>Push Service</th><th>Action</th></tr></thead><tbody>';
+                        html += '<thead><tr><th>Device / Name</th><th>Push Service</th><th>Action</th></tr></thead><tbody>';
                         res.subscriptions.forEach(function(s) {
+                            var nameDisplay = s.device_name || s.device_type || 'Web Device';
                             html += '<tr>';
-                            html += '<td><strong>' + (s.device_type || 'Web Device') + '</strong></td>';
+                            html += '<td><strong>' + nameDisplay + '</strong></td>';
                             html += '<td><span class="badge bg-secondary">' + (s.service || 'Web Push') + '</span></td>';
                             html += '<td><button class="btn btn-danger btn-sm text-nowrap" style="padding:1px 6px; font-size:0.75rem;" onclick="window.GenmonPWA.removeDevice(\'' + s.endpoint + '\')">Remove</button></td>';
                             html += '</tr>';
