@@ -169,6 +169,8 @@ def RemoveSubscription(endpoint):
 def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x192.png", target_endpoint=None):
     global subscriptions
     try:
+        InitConfigIfNeeded()
+        LoadSubscriptions()
         pub, priv = EnsureVapidKeys()
         payload_data = json.dumps({
             "title": title,
@@ -181,18 +183,16 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
         # Use pywebpush if available, otherwise direct HTTP dispatch
         try:
             from pywebpush import webpush
-            claims = {"sub": config.ReadValue("vapid_claims_sub", default="mailto:admin@genmon.local")}
-            vapid_key_file_data = {
-                "public_key": pub,
-                "private_key": priv
-            }
         except ImportError:
             webpush = None
 
         targets = subscriptions if not target_endpoint else [s for s in subscriptions if s.get("endpoint") == target_endpoint]
         if not targets:
-            log.info("No web push subscriptions registered.")
+            if log: log.info("No web push subscriptions registered.")
             return True
+
+        if not webpush:
+            if log: log.warning("pywebpush library is missing. Installing pywebpush package is required for encrypted push dispatch.")
 
         to_remove = []
         for sub in list(targets):
@@ -226,14 +226,15 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
                 if "404" in err_str or "410" in err_str:
                     to_remove.append(endpoint)
                 else:
-                    log.error("Failed to send push to endpoint " + str(endpoint) + ": " + err_str)
+                    if log: log.error("Failed to send push to endpoint " + str(endpoint) + ": " + err_str)
+                    if console: console.error("Failed to send push to endpoint " + str(endpoint) + ": " + err_str)
 
         for ep in to_remove:
             RemoveSubscription(ep)
 
         return True
     except Exception as e:
-        log.error("Error in SendWebPushPayload: " + str(e))
+        if log: log.error("Error in SendWebPushPayload: " + str(e))
         return False
 
 # Event Handlers
