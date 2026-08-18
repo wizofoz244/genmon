@@ -43,7 +43,16 @@ sub_lock = threading.RLock()
 def InitConfigIfNeeded():
     global config, log
     try:
-        conf_file = os.path.join(parent_root, "conf", "genwebpush.conf")
+        conf_dir = ProgramDefaults.ConfPath
+        if "-c" in sys.argv:
+            conf_dir = sys.argv[sys.argv.index("-c") + 1].strip()
+        elif "--configpath" in sys.argv:
+            conf_dir = sys.argv[sys.argv.index("--configpath") + 1].strip()
+        elif not os.path.exists(conf_dir) and os.path.exists(os.path.join(parent_root, "conf")):
+            conf_dir = os.path.join(parent_root, "conf")
+
+        conf_file = os.path.join(conf_dir, "genwebpush.conf")
+
         # Ensure the config file exists so MyConfig.WriteValue does not silently fail
         if not os.path.exists(conf_file):
             try:
