@@ -224,6 +224,9 @@ class MyConfig(MyCommon):
         if section != None:
             self.SetSection(section)
 
+        if Value != None and not isinstance(Value, str):
+            Value = str(Value)
+
         SectionFound = False
         try:
             with self.CriticalLock:
