@@ -7313,7 +7313,9 @@ def webpush_vapid_key():
     try:
         from addon.genwebpush import EnsureVapidKeys
         pub, _ = EnsureVapidKeys()
-        return jsonify(status="ok", public_key=pub)
+        resp = jsonify(status="ok", public_key=pub)
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        return resp
     except Exception as e1:
         LogErrorLine("Error getting VAPID public key: " + str(e1))
         return jsonify(status="error", message=str(e1)), 500

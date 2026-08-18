@@ -1,4 +1,4 @@
-const CACHE_NAME = 'genmon-v8';
+const CACHE_NAME = 'genmon-v9';
 // Core assets kept for offline use only. Navigation/HTML is intentionally NOT
 // listed here so login/auth pages are never served stale from the cache.
 const SHELL_ASSETS = [

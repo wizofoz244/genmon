@@ -114,7 +114,7 @@
                     return;
                 }
 
-                $.getJSON('/api/webpush/vapid_key').done(function(res) {
+                $.getJSON('/api/webpush/vapid_key?_t=' + Date.now()).done(function(res) {
                     if (!res || !res.public_key) {
                         alert('Could not retrieve VAPID key from server.');
                         return;
