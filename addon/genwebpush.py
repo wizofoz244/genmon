@@ -652,9 +652,40 @@ def OnRunManual(Active):
         SendWebPushPayload("Genmon Status Warning", msg, category="warning")
 
 def OnAlarm(Active):
+    global notify
     InitConfigIfNeeded()
     if config and config.ReadValue("notify_error", return_type=bool, default=True):
-        msg = "ALARM DETECTED on Generator Controller!" if Active else "Generator Alarm Cleared"
+        alarm_text = ""
+        if Active and "notify" in globals() and notify:
+            try:
+                res = notify.SendCommand("generator: status_json")
+                if res:
+                    s_dict = json.loads(res)
+                    for item in s_dict.get("Status", []):
+                        if isinstance(item, dict):
+                            for key, val_list in item.items():
+                                if isinstance(val_list, list):
+                                    for sub in val_list:
+                                        if isinstance(sub, dict):
+                                            if "System In Alarm" in sub:
+                                                alarm_text = str(sub["System In Alarm"]).strip()
+                                                break
+                                            elif "Alarm State" in sub:
+                                                alarm_text = str(sub["Alarm State"]).strip()
+                                                break
+                                if alarm_text:
+                                    break
+            except Exception:
+                pass
+
+        if Active:
+            if alarm_text and alarm_text.lower() not in ["none", "no alarm", "normal", "system in alarm"]:
+                msg = f"ALARM: {alarm_text}!"
+            else:
+                msg = "ALARM DETECTED on Generator Controller!"
+        else:
+            msg = "Generator Alarm Cleared"
+
         if console: console.error("WebPush Alarm: " + msg)
         SendWebPushPayload("🚨 Genmon Generator ALARM!", msg, category="error")
 
