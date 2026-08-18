@@ -7231,7 +7231,8 @@ function init() {
         $('#site-name').text(data.sitename);
         document.title = data.sitename + ' \u2014 Genmon';
       }
-      if (data.version) $('#footer-version').text('Genmon ' + data.version);
+      var addonVersion = 'Oz Custom Addons v1.2.0';
+      if (data.version) $('#footer-version').text('Genmon ' + data.version + ' \u2014 ' + addonVersion);
 
       /* Enable logout & cache purge button for all users */
       $('#logout-btn').show().off('click').on('click', function() {
