@@ -123,15 +123,9 @@
                     navigator.serviceWorker.register('/sw.js').then(function() {
                         return navigator.serviceWorker.ready;
                     }).then(function(reg) {
-                        return reg.pushManager.getSubscription().then(function(sub) {
-                            if (sub) {
-                                return sub.unsubscribe().catch(function() {});
-                            }
-                        }).then(function() {
-                            return reg.pushManager.subscribe({
-                                userVisibleOnly: true,
-                                applicationServerKey: convertedKey
-                            });
+                        return reg.pushManager.subscribe({
+                            userVisibleOnly: true,
+                            applicationServerKey: convertedKey
                         });
                     }).then(function(sub) {
                         self.sub = sub;
