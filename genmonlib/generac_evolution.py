@@ -5175,9 +5175,6 @@ class Evolution(GeneratorController):
                 return "SERVICEDUE"
             return "ALARM"
 
-        if self.ServiceIsDue():
-            return "SERVICEDUE"
-
         EngineValue = self.GetEngineState()
         SwitchValue = self.GetSwitchState()
         if "exercising" in EngineValue.lower():
@@ -5187,6 +5184,10 @@ class Evolution(GeneratorController):
                 return "RUNNING"
             else:
                 return "RUNNING-MANUAL"
+                
+        if self.ServiceIsDue():
+            return "SERVICEDUE"
+
         else:
             if "off" in SwitchValue.lower():
                 return "OFF"

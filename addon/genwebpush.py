@@ -639,7 +639,7 @@ def OnExercise(Active):
 
 def OnRun(Active):
     InitConfigIfNeeded()
-    if config and config.ReadValue("notify_exercise", return_type=bool, default=True):
+    if config and config.ReadValue("notify_info", return_type=bool, default=True):
         msg = "Generator is RUNNING" if Active else "Generator Stopped Running"
         if console: console.info("WebPush Run: " + msg)
         SendWebPushPayload("Genmon Generator Status", msg, category="info")
