@@ -5014,7 +5014,7 @@ var Pages = {
         { id:'sec-session', parent:'usehttps', label:'Session & Remember Me',
           icon:'clock',
           desc:'Set how many days the browser remembers your login. Set to 0 for a browser-session only \u2014 you\u2019ll be logged out when you close the browser.',
-          fields:['remember_me_days'] },
+          fields:['remember_me_days'], custom: 'session' },
         { id:'sec-mfa',    parent:'usehttps', label:'Multi-Factor Authentication',
           icon:'shield',
           desc:'Add a second layer of security. After entering your password you\u2019ll need a code from an authenticator app (Google Authenticator, Authy, etc.). MFA applies to all accounts; passkeys and backup codes are admin-only.',
@@ -5345,6 +5345,13 @@ var Pages = {
                 h += UI.formField(fk, secMap[fk].def, secMap[fk].def[3]);
               }
             });
+            /* Custom UI for global session termination */
+            if (sub.custom === 'session') {
+              h += '<div style="margin-top:15px; padding-top:15px; border-top:1px solid var(--border);">' +
+                '<p style="font-size:0.85rem; color:var(--text-muted); margin-top:0; margin-bottom:8px;">If you left yourself logged in on a public computer or lost a device, you can instantly terminate all active sessions across all devices.</p>' +
+                '<button type="button" class="btn btn-sm" id="logout-all-btn" style="background:var(--danger); border-color:var(--danger); color:#fff;">' + icon('alert') + ' Logout All Devices</button>' +
+                '</div>';
+            }
             /* Custom UI for passkey management */
             if (sub.custom === 'passkey') {
               h += '<div id="passkey-manage">' +
@@ -6010,6 +6017,12 @@ var Pages = {
         }).fail(function() { $list.html('<em>Could not load passkeys.</em>'); });
       }
       if (_origMfa || _mfaEnrolled) { loadPasskeys(); }
+      $w.on('click', '#logout-all-btn', function() {
+        if (confirm("Are you sure you want to log out ALL devices? Every browser will be forced to log in again.")) {
+          window.location.href = window.location.protocol + '//' + window.location.host + '/logout_all';
+        }
+      });
+
       $w.on('click', '#passkey-register-btn', function() {
         var btn = this; btn.disabled = true;
         var h = location.hostname;
@@ -7224,14 +7237,6 @@ function init() {
       $('#logout-btn').show().off('click').on('click', function() {
         window.location.href = window.location.protocol + '//' + window.location.host + '/logout';
       });
-
-      if (S.writeAccess) {
-        $('#logout-all-btn').show().off('click').on('click', function() {
-          if (confirm("Are you sure you want to log out ALL devices? Every browser will be forced to log in again.")) {
-            window.location.href = window.location.protocol + '//' + window.location.host + '/logout_all';
-          }
-        });
-      }
 
       /* Fetch metric setting for 24-hour clock display */
       API.get('settings', 8000).done(function(sd){
