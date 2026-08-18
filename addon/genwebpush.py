@@ -436,6 +436,19 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
             except Exception as e_vapid:
                 if log: log.warning(f"Error instantiating Vapid key object: {e_vapid}")
 
+        if vapid_key is not None and hasattr(vapid_key, "sign"):
+            # Monkey-patch py_vapid's sign method to strictly enforce RFC 8292 spacing
+            # Apple APNs sometimes rejects the JWT if the comma lacks a trailing space: 't=..., k=...'
+            original_sign = vapid_key.sign
+            def patched_sign(self, claims, crypto_key=None):
+                headers = original_sign(claims, crypto_key=crypto_key)
+                if "Authorization" in headers and ",k=" in headers["Authorization"]:
+                    headers["Authorization"] = headers["Authorization"].replace(",k=", ", k=")
+                return headers
+            # Bind the patched method to the instance
+            import types
+            vapid_key.sign = types.MethodType(patched_sign, vapid_key)
+
         if vapid_key is None:
             vapid_key = priv if priv and not (isinstance(priv, str) and "-----BEGIN" in priv) else priv_pem
 
