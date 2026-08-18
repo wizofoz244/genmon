@@ -625,8 +625,164 @@ class TestWebPushIntegration(unittest.TestCase):
         self.assertTrue(ValidateVapidKeys(f'"{pub}"', f"'{priv}'"))
         self.assertTrue(ValidateVapidKeys(f"  {pub} \n", f"\n{priv}  "))
 
+    def test_generate_apple_jwt_rfc8292_conformance(self) -> None:
+        """Verify GenerateAppleJWT creates RFC 8292 compliant JWT with exact 64-byte signature."""
+        try:
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import ec
+            from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature, encode_dss_signature
+            from py_vapid import Vapid
+        except ImportError:
+            return
+
+        import base64
+        import json
+        from addon.genwebpush import GenerateAppleJWT, GenerateVapidKeyPair, RawVapidKeyToSec1Pem
+
+        pub_b64, priv_b64 = GenerateVapidKeyPair()
+        pem_str = RawVapidKeyToSec1Pem(priv_b64)
+        vapid_obj = Vapid.from_pem(pem_str.encode("utf-8"))
+
+        aud = "https://push.apple.com"
+        sub = "mailto:genmon.push@gmail.com"
+
+        # Test with multiple private key representations including raw bytes, bytearrays, and PEM bytes
+        rem = len(priv_b64.rstrip("=")) % 4
+        raw_priv_32 = base64.urlsafe_b64decode(priv_b64.rstrip("=") + ("=" * (4 - rem) if rem > 0 else ""))
+
+        test_representations = [
+            priv_b64,
+            pem_str,
+            pem_str.encode("utf-8"),
+            vapid_obj,
+            vapid_obj.private_key,
+            raw_priv_32,
+            bytearray(raw_priv_32),
+            f'"{priv_b64}"',
+            f"  {priv_b64} \n",
+        ]
+
+        for priv_input in test_representations:
+            auth_header = GenerateAppleJWT(priv_input, sub, aud)
+            self.assertIsNotNone(auth_header, f"GenerateAppleJWT returned None for input type {type(priv_input)}")
+            self.assertTrue(auth_header.startswith("vapid t="))
+            self.assertIn(", k=", auth_header)
+
+            parts = auth_header.split(" ")
+            self.assertEqual(parts[0], "vapid")
+            self.assertTrue(parts[1].startswith("t="))
+            self.assertTrue(parts[2].startswith("k="))
+
+            jwt_token = parts[1][2:].rstrip(",")
+            jwt_parts = jwt_token.split(".")
+            self.assertEqual(len(jwt_parts), 3)
+
+            # 1. Header verification
+            header_bytes = base64.urlsafe_b64decode(jwt_parts[0] + "=" * ((4 - len(jwt_parts[0]) % 4) % 4))
+            header = json.loads(header_bytes.decode("utf-8"))
+            self.assertEqual(header, {"typ": "JWT", "alg": "ES256"})
+
+            # 2. Claims verification
+            claims_bytes = base64.urlsafe_b64decode(jwt_parts[1] + "=" * ((4 - len(jwt_parts[1]) % 4) % 4))
+            claims = json.loads(claims_bytes.decode("utf-8"))
+            self.assertEqual(claims["aud"], aud)
+            self.assertEqual(claims["sub"], sub)
+            self.assertIn("exp", claims)
+
+            # 3. Signature verification (strictly 64 bytes R|S)
+            sig_bytes = base64.urlsafe_b64decode(jwt_parts[2] + "=" * ((4 - len(jwt_parts[2]) % 4) % 4))
+            self.assertEqual(len(sig_bytes), 64)
+            r = int.from_bytes(sig_bytes[:32], "big")
+            s = int.from_bytes(sig_bytes[32:], "big")
+            rsig_der = encode_dss_signature(r, s)
+
+            # 4. Public key extraction & mathematical verification
+            pub_key_b64 = parts[2][2:]
+            pub_key_bytes = base64.urlsafe_b64decode(pub_key_b64 + "=" * ((4 - len(pub_key_b64) % 4) % 4))
+            self.assertEqual(len(pub_key_bytes), 65)
+            self.assertEqual(pub_key_bytes[0], 0x04)
+
+            pub_key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), pub_key_bytes)
+            signing_input = f"{jwt_parts[0]}.{jwt_parts[1]}".encode("utf-8")
+            pub_key.verify(rsig_der, signing_input, ec.ECDSA(hashes.SHA256()))
+
+        # Verify invalid keys return None safely
+        self.assertIsNone(GenerateAppleJWT("", sub, aud))
+        self.assertIsNone(GenerateAppleJWT(None, sub, aud))
+        self.assertIsNone(GenerateAppleJWT("not_a_valid_key", sub, aud))
+        self.assertIsNone(GenerateAppleJWT(b"too_short", sub, aud))
+
+    def test_base64url_subscriber_key_decoding_and_http_ece_encryption(self) -> None:
+        """Verify base64url decoding of subscriber keys and successful http_ece payload encryption."""
+        try:
+            import http_ece
+            from cryptography.hazmat.primitives.asymmetric import ec
+        except ImportError:
+            return
+
+        import base64
+        import json
+        import os
+        from test_apple_push import b64urldecode, b64urlencode
+        from addon.genwebpush import b64urldecode as b64urldecode_mod, b64urlencode as b64urlencode_mod
+
+        # Standard subscription keys from Web Push subscription JSON
+        p256dh_b64 = "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM"
+        auth_b64 = "tBHItJI5svbpez7KI4CCXg"
+
+        # 1. Base64URL decode
+        for decode_fn in [b64urldecode, b64urldecode_mod]:
+            raw_p256dh = decode_fn(p256dh_b64)
+            raw_auth = decode_fn(auth_b64)
+
+            self.assertEqual(len(raw_p256dh), 65)
+            self.assertEqual(raw_p256dh[0], 0x04)
+            self.assertEqual(len(raw_auth), 16)
+
+            # Verify raw bytes and bytearray representations are preserved cleanly
+            self.assertEqual(decode_fn(raw_p256dh), raw_p256dh)
+            self.assertEqual(decode_fn(bytearray(raw_p256dh)), raw_p256dh)
+            self.assertEqual(decode_fn(raw_auth), raw_auth)
+            self.assertEqual(decode_fn(bytearray(raw_auth)), raw_auth)
+            self.assertEqual(decode_fn(b"abcdef0123456789"), b"abcdef0123456789")
+            self.assertEqual(decode_fn(None), b"")
+            self.assertEqual(decode_fn(""), b"")
+
+        for encode_fn in [b64urlencode, b64urlencode_mod]:
+            self.assertEqual(encode_fn(raw_p256dh), p256dh_b64)
+            self.assertEqual(encode_fn(raw_auth), auth_b64)
+
+        # 2. http_ece.encrypt with decoded raw bytes succeeds without Unsupported elliptic curve point type error
+        server_key = ec.generate_private_key(ec.SECP256R1())
+        salt = os.urandom(16)
+        payload = {"title": "Test Alert", "body": "Power Outage"}
+
+        encrypted_data = http_ece.encrypt(
+            json.dumps(payload).encode("utf-8"),
+            salt=salt,
+            private_key=server_key,
+            dh=raw_p256dh,
+            auth_secret=raw_auth,
+            version="aes128gcm"
+        )
+        self.assertTrue(len(encrypted_data) > 0)
+        self.assertEqual(encrypted_data[:16], salt)
+
+        # 3. Passing utf-8 encoded string reproduces ValueError: Unsupported elliptic curve point type
+        with self.assertRaises(ValueError) as ctx:
+            http_ece.encrypt(
+                json.dumps(payload).encode("utf-8"),
+                salt=salt,
+                private_key=server_key,
+                dh=p256dh_b64.encode("utf-8"),
+                auth_secret=auth_b64.encode("utf-8"),
+                version="aes128gcm"
+            )
+        self.assertIn("Unsupported elliptic curve point type", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
