@@ -307,6 +307,16 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
                 continue
             try:
                 if webpush:
+                    priv_pem = priv
+                    try:
+                        import base64
+                        raw_priv = base64.urlsafe_b64decode(priv + "==")
+                        if len(raw_priv) == 32:
+                            der = bytes.fromhex("30310201010420") + raw_priv + bytes.fromhex("a00a06082a8648ce3d030107")
+                            priv_pem = "-----BEGIN EC PRIVATE KEY-----\n" + base64.b64encode(der).decode("utf-8") + "\n-----END EC PRIVATE KEY-----\n"
+                    except Exception:
+                        pass
+
                     webpush(
                         subscription_info=sub,
                         data=json.dumps({
@@ -315,7 +325,7 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
                             "category": category,
                             "icon": icon
                         }),
-                        vapid_private_key=priv,
+                        vapid_private_key=priv_pem,
                         vapid_claims={"sub": config.ReadValue("vapid_claims_sub", default="mailto:genmon.push@gmail.com")},
                         ttl=86400
                     )
