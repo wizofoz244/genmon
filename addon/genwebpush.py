@@ -44,9 +44,9 @@ def InitConfigIfNeeded():
     global config, log
     if config is None:
         try:
-            conf_file = os.path.join("/etc/genmon", "genwebpush.conf")
-            if not os.path.isfile(conf_file):
-                conf_file = os.path.join(parent_root, "conf", "genwebpush.conf")
+            # Force using the local conf directory to prevent split-brain issues
+            # where genmon.py (root) reads /etc/genmon/ and genserv.py (pi user) reads conf/
+            conf_file = os.path.join(parent_root, "conf", "genwebpush.conf")
             config = MyConfig(filename=conf_file, section="genwebpush")
         except Exception:
             pass
