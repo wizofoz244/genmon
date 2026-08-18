@@ -316,7 +316,7 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
                             "icon": icon
                         }),
                         vapid_private_key=priv,
-                        vapid_claims={"sub": config.ReadValue("vapid_claims_sub", default="mailto:admin@pony-grouper.ts.net")},
+                        vapid_claims={"sub": config.ReadValue("vapid_claims_sub", default="mailto:genmon.push@gmail.com")},
                         ttl=86400
                     )
                     if log: log.info(f"Successfully dispatched push payload '{title}' to {dev_label} ({endpoint[:40]}...)")
