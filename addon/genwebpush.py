@@ -44,6 +44,14 @@ def InitConfigIfNeeded():
     global config, log
     try:
         conf_file = os.path.join(parent_root, "conf", "genwebpush.conf")
+        # Ensure the config file exists so MyConfig.WriteValue does not silently fail
+        if not os.path.exists(conf_file):
+            try:
+                open(conf_file, 'a').close()
+                os.chmod(conf_file, 0o666)
+            except Exception:
+                pass
+
         if config is None:
             config = MyConfig(filename=conf_file, section="genwebpush")
         else:
