@@ -51,6 +51,13 @@
                         if (activeEndpoints.indexOf(sub.endpoint) !== -1) {
                             self.sub = sub;
                             self.updateUIStatus(true);
+                            if (res.subscriptions) {
+                                res.subscriptions.forEach(function(s) {
+                                    if (s.endpoint === sub.endpoint && s.device_name) {
+                                        $('#webpush-device-name').val(s.device_name);
+                                    }
+                                });
+                            }
                         } else {
                             sub.unsubscribe().catch(function() {});
                             self.sub = null;
@@ -261,6 +268,12 @@
                         html += '<thead><tr><th>Device / Name</th><th>Push Service</th><th>Actions</th></tr></thead><tbody>';
                         res.subscriptions.forEach(function(s) {
                             var nameDisplay = s.device_name || s.device_type || 'Web Device';
+                            
+                            // If this is the current device, ensure the text box matches the custom name
+                            if (self.sub && self.sub.endpoint === s.endpoint && s.device_name) {
+                                $('#webpush-device-name').val(s.device_name);
+                            }
+
                             var escName = nameDisplay.replace(/'/g, "\\'");
                             var escEndpoint = s.endpoint.replace(/'/g, "\\'");
                             html += '<tr>';
