@@ -42,14 +42,20 @@ sub_lock = threading.RLock()
 
 def InitConfigIfNeeded():
     global config, log
-    if config is None:
-        try:
-            # Force using the local conf directory to prevent split-brain issues
-            # where genmon.py (root) reads /etc/genmon/ and genserv.py (pi user) reads conf/
-            conf_file = os.path.join(parent_root, "conf", "genwebpush.conf")
+    try:
+        conf_file = os.path.join(parent_root, "conf", "genwebpush.conf")
+        if config is None:
             config = MyConfig(filename=conf_file, section="genwebpush")
-        except Exception:
-            pass
+        else:
+            # Force reload to drop any cached ephemeral keys and read the permanent key
+            if hasattr(config, "config") and hasattr(config, "FileName"):
+                config.config.read(config.FileName)
+                # update the read data that is cached
+                for section in config.config.sections():
+                    for k, v in config.config.items(section):
+                        config.data[k] = v
+    except Exception:
+        pass
     if log is None:
         try:
             log = SetupLogger("genwebpush", "/var/log/genwebpush.log")
@@ -238,6 +244,10 @@ def EnsureVapidKeys():
             if pub and priv and config:
                 config.WriteValue("vapid_public_key", pub)
                 config.WriteValue("vapid_private_key", priv)
+                try:
+                    os.chmod(config.FileName, 0o666)
+                except Exception:
+                    pass
                 if log: log.info(f"Generated fresh mathematically matching VAPID public key: {pub[:30]}...")
 
         return pub, priv
