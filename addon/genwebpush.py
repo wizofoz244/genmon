@@ -40,6 +40,93 @@ notify = None
 subscriptions = []
 sub_lock = threading.RLock()
 
+def b64urldecode(b64str):
+    """Safely decode a base64 or base64url string with missing padding to raw bytes."""
+    if b64str is None:
+        return b""
+    if isinstance(b64str, (bytes, bytearray)):
+        if len(b64str) in [16, 32] or (len(b64str) == 65 and b64str[0] == 0x04):
+            return bytes(b64str)
+        try:
+            b64str = b64str.decode("ascii")
+        except (UnicodeDecodeError, Exception):
+            return bytes(b64str)
+    b64str = str(b64str).strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=")
+    rem = len(b64str) % 4
+    if rem > 0:
+        b64str += "=" * (4 - rem)
+    return base64.urlsafe_b64decode(b64str)
+
+
+def b64urlencode(raw_bytes):
+    """Encode raw bytes to unpadded base64url ASCII string."""
+    if isinstance(raw_bytes, str):
+        raw_bytes = raw_bytes.encode("utf-8")
+    return base64.urlsafe_b64encode(raw_bytes).decode("utf-8").rstrip("=")
+
+
+def GenerateAppleJWT(vapid_private_key, sub, aud):
+    import time
+    import json
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+    
+    try:
+        priv_key = None
+        if hasattr(vapid_private_key, "private_key"):
+            priv_key = vapid_private_key.private_key
+        elif isinstance(vapid_private_key, ec.EllipticCurvePrivateKey):
+            priv_key = vapid_private_key
+        elif isinstance(vapid_private_key, (bytes, bytearray)) and len(vapid_private_key) == 32:
+            priv_key = ec.derive_private_key(int.from_bytes(bytes(vapid_private_key), "big"), ec.SECP256R1())
+        elif isinstance(vapid_private_key, (bytes, bytearray)) and b"-----BEGIN" in vapid_private_key:
+            priv_key = serialization.load_pem_private_key(bytes(vapid_private_key), password=None)
+        elif isinstance(vapid_private_key, str) and "-----BEGIN" in vapid_private_key:
+            priv_key = serialization.load_pem_private_key(vapid_private_key.encode("utf-8"), password=None)
+        elif isinstance(vapid_private_key, (str, bytes, bytearray)):
+            raw_priv = b64urldecode(vapid_private_key)
+            if len(raw_priv) == 32:
+                priv_key = ec.derive_private_key(int.from_bytes(raw_priv, "big"), ec.SECP256R1())
+        
+        if priv_key is None:
+            raise ValueError("Unable to derive private key from provided VAPID key input")
+            
+        # Header and claims exactly as Apple expects conforming to RFC 8292
+        header = {"typ": "JWT", "alg": "ES256"}
+        claims = {
+            "aud": aud,
+            "sub": sub,
+            "exp": int(time.time()) + 12 * 3600
+        }
+        
+        # Serialize and encode without whitespace in JSON
+        header_enc = b64urlencode(json.dumps(header, separators=(',', ':')).encode('utf-8'))
+        claims_enc = b64urlencode(json.dumps(claims, separators=(',', ':')).encode('utf-8'))
+        token = f"{header_enc}.{claims_enc}"
+        
+        # Sign JWS using P-256 and SHA-256
+        rsig = priv_key.sign(token.encode('utf-8'), ec.ECDSA(hashes.SHA256()))
+        
+        # Format signature strictly to 64 bytes (r and s concatenated big-endian 32 bytes each)
+        r, s = decode_dss_signature(rsig)
+        sig_raw = r.to_bytes(32, 'big') + s.to_bytes(32, 'big')
+        sig_enc = b64urlencode(sig_raw)
+        
+        # VAPID public key (uncompressed point, 65 bytes)
+        pub_bytes = priv_key.public_key().public_bytes(
+            serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint
+        )
+        k_enc = b64urlencode(pub_bytes)
+        
+        # Exact Authorization header string
+        return f"vapid t={token}.{sig_enc}, k={k_enc}"
+    except Exception as e:
+        if log:
+            log.error(f"Failed to generate custom Apple JWT: {str(e)}")
+        return None
+
 def InitConfigIfNeeded():
     global config, log
     try:
@@ -98,20 +185,15 @@ def RawVapidKeyToSec1Pem(priv_b64):
             der = bytes.fromhex("30310201010420") + bytes(priv_b64) + bytes.fromhex("a00a06082a8648ce3d030107")
             pem_b64 = base64.b64encode(der).decode("utf-8")
             return f"-----BEGIN EC PRIVATE KEY-----\n{pem_b64}\n-----END EC PRIVATE KEY-----\n"
-        try:
-            priv_b64 = priv_b64.decode("utf-8")
-        except Exception:
-            return priv_b64
-    if not isinstance(priv_b64, str):
-        return priv_b64
-    if "-----BEGIN" in priv_b64:
+        if b"-----BEGIN" in priv_b64:
+            try:
+                return priv_b64.decode("utf-8")
+            except Exception:
+                return priv_b64
+    if isinstance(priv_b64, str) and "-----BEGIN" in priv_b64:
         return priv_b64
     try:
-        priv_clean = priv_b64.strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=")
-        rem = len(priv_clean) % 4
-        if rem > 0:
-            priv_clean += "=" * (4 - rem)
-        raw_priv = base64.urlsafe_b64decode(priv_clean)
+        raw_priv = b64urldecode(priv_b64)
         if len(raw_priv) == 32:
             der = bytes.fromhex("30310201010420") + raw_priv + bytes.fromhex("a00a06082a8648ce3d030107")
             pem_b64 = base64.b64encode(der).decode("utf-8")
@@ -132,8 +214,8 @@ def GenerateVapidKeyPair():
             serialization.Encoding.X962,
             serialization.PublicFormat.UncompressedPoint
         )
-        pub = base64.urlsafe_b64encode(raw_pub).decode("utf-8").rstrip("=")
-        priv = base64.urlsafe_b64encode(raw_priv).decode("utf-8").rstrip("=")
+        pub = b64urlencode(raw_pub)
+        priv = b64urlencode(raw_priv)
         return pub, priv
     except Exception:
         pass
@@ -149,13 +231,13 @@ def GenerateVapidKeyPair():
             input=out_pem,
             stderr=subprocess.DEVNULL
         )
-        pub = base64.urlsafe_b64encode(out_pub[-65:]).decode("utf-8").rstrip("=")
+        pub = b64urlencode(out_pub[-65:])
         out_priv_der = subprocess.check_output(
             ["openssl", "ec", "-inform", "PEM", "-outform", "DER"],
             input=out_pem,
             stderr=subprocess.DEVNULL
         )
-        priv = base64.urlsafe_b64encode(out_priv_der[7:39]).decode("utf-8").rstrip("=")
+        priv = b64urlencode(out_priv_der[7:39])
         return pub, priv
     except Exception:
         return "", ""
@@ -176,25 +258,14 @@ def ValidateVapidKeys(pub_b64, priv_b64):
             priv_int = int.from_bytes(bytes(priv_b64), "big")
             priv_key = ec.derive_private_key(priv_int, ec.SECP256R1())
         else:
-            priv_clean = priv_b64.strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=") if isinstance(priv_b64, str) else priv_b64.decode("utf-8").strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=")
-            rem = len(priv_clean) % 4
-            if rem > 0:
-                priv_clean += "=" * (4 - rem)
-            priv_bytes = base64.urlsafe_b64decode(priv_clean)
+            priv_bytes = b64urldecode(priv_b64)
             if len(priv_bytes) != 32:
                 return False
             priv_int = int.from_bytes(priv_bytes, "big")
             priv_key = ec.derive_private_key(priv_int, ec.SECP256R1())
         pub_key = priv_key.public_key()
         pub_bytes = pub_key.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
-        if isinstance(pub_b64, (bytes, bytearray)) and len(pub_b64) == 65:
-            expected_raw_pub = bytes(pub_b64)
-        else:
-            pub_clean = pub_b64.strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=") if isinstance(pub_b64, str) else pub_b64.decode("utf-8").strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=")
-            rem = len(pub_clean) % 4
-            if rem > 0:
-                pub_clean += "=" * (4 - rem)
-            expected_raw_pub = base64.urlsafe_b64decode(pub_clean)
+        expected_raw_pub = b64urldecode(pub_b64)
         return pub_bytes == expected_raw_pub
     except Exception:
         pass
@@ -221,11 +292,7 @@ def ValidateVapidKeys(pub_b64, priv_b64):
                 stderr=subprocess.DEVNULL
             )
         else:
-            priv_clean = priv_b64.strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=") if isinstance(priv_b64, str) else priv_b64.decode("utf-8").strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=")
-            rem = len(priv_clean) % 4
-            if rem > 0:
-                priv_clean += "=" * (4 - rem)
-            priv_bytes = base64.urlsafe_b64decode(priv_clean)
+            priv_bytes = b64urldecode(priv_b64)
             if len(priv_bytes) != 32:
                 return False
             der_head = bytes.fromhex("30310201010420") + priv_bytes + bytes.fromhex("a00a06082a8648ce3d030107")
@@ -235,14 +302,7 @@ def ValidateVapidKeys(pub_b64, priv_b64):
                 stderr=subprocess.DEVNULL
             )
         out_pub_raw = out_pub[-65:]
-        if isinstance(pub_b64, (bytes, bytearray)) and len(pub_b64) == 65:
-            expected_raw_pub = bytes(pub_b64)
-        else:
-            pub_clean = pub_b64.strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=") if isinstance(pub_b64, str) else pub_b64.decode("utf-8").strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=")
-            rem = len(pub_clean) % 4
-            if rem > 0:
-                pub_clean += "=" * (4 - rem)
-            expected_raw_pub = base64.urlsafe_b64decode(pub_clean)
+        expected_raw_pub = b64urldecode(pub_b64)
         return out_pub_raw == expected_raw_pub
     except Exception:
         return False
@@ -406,13 +466,14 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
         InitConfigIfNeeded()
         LoadSubscriptions()
         pub, priv = EnsureVapidKeys()
-        payload_data = json.dumps({
+        payload_dict = {
             "title": title,
             "body": message,
             "category": category,
             "icon": icon,
             "timestamp": int(time.time() * 1000)
-        }).encode("utf-8")
+        }
+        payload_data = json.dumps(payload_dict).encode("utf-8")
 
         # Use pywebpush if available, otherwise direct HTTP dispatch
         try:
@@ -436,7 +497,7 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
         to_remove = []
         push_errors = []
         priv_pem = RawVapidKeyToSec1Pem(priv)
-        vapid_sub_claim = config.ReadValue("vapid_claims_sub", default="mailto:genmon.push@gmail.com") if config else "mailto:genmon.push@gmail.com"
+        vapid_sub_claim = config.ReadValue("vapid_claims_sub", default="https://github.com/wizofoz244/genmon") if config else "https://github.com/wizofoz244/genmon"
         if not vapid_sub_claim or not str(vapid_sub_claim).strip():
             vapid_sub_claim = "mailto:genmon.push@gmail.com"
         vapid_sub_claim = str(vapid_sub_claim).strip()
@@ -463,19 +524,6 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
             except Exception as e_vapid:
                 if log: log.warning(f"Error instantiating Vapid key object: {e_vapid}")
 
-        if vapid_key is not None and hasattr(vapid_key, "sign"):
-            # Monkey-patch py_vapid's sign method to strictly enforce RFC 8292 spacing
-            # Apple APNs sometimes rejects the JWT if the comma lacks a trailing space: 't=..., k=...'
-            original_sign = vapid_key.sign
-            def patched_sign(self, claims, crypto_key=None):
-                headers = original_sign(claims, crypto_key=crypto_key)
-                if "Authorization" in headers and ",k=" in headers["Authorization"]:
-                    headers["Authorization"] = headers["Authorization"].replace(",k=", ", k=")
-                return headers
-            # Bind the patched method to the instance
-            import types
-            vapid_key.sign = types.MethodType(patched_sign, vapid_key)
-
         if vapid_key is None:
             vapid_key = priv if priv and not (isinstance(priv, str) and "-----BEGIN" in priv) else priv_pem
 
@@ -486,17 +534,16 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
                 continue
             try:
                 if webpush:
+                    from urllib.parse import urlparse
+                    parsed_endpoint = urlparse(endpoint)
+                    aud_claim = f"{parsed_endpoint.scheme}://{parsed_endpoint.netloc}"
                     webpush(
                         subscription_info=sub,
-                        data=json.dumps({
-                            "title": title,
-                            "body": message,
-                            "category": category,
-                            "icon": icon
-                        }),
+                        data=json.dumps(payload_dict),
                         vapid_private_key=vapid_key,
-                        vapid_claims={"sub": vapid_sub_claim, "exp": int(time.time()) + 12 * 3600},
-                        ttl=86400
+                        vapid_claims={"sub": vapid_sub_claim, "aud": aud_claim, "exp": int(time.time()) + 12 * 3600},
+                        ttl=3600,
+                        timeout=5
                     )
                     if log: log.info(f"Successfully dispatched push payload '{title}' to {dev_label} ({endpoint[:40]}...)")
                 else:
@@ -513,7 +560,7 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
                 resp_status = getattr(getattr(ex_push, "response", None), "status_code", None)
                 resp_text = getattr(getattr(ex_push, "response", None), "text", "") or ""
                 if (resp_status in [400, 403, 404, 410] or
-                    any(k in err_str for k in ["400", "403", "404", "410", "BadJwtToken"]) or
+                    any(k in err_str for k in ["400", "403", "404", "410", "BadJwtToken", "NotRegistered", "Gone"]) or
                     "BadJwtToken" in resp_text):
                     to_remove.append(endpoint)
                     if log: log.warning(f"Push endpoint invalid/expired ({err_str}) for {dev_label}: auto-removing stale subscription.")
