@@ -38,7 +38,7 @@ console = None
 config = None
 notify = None
 subscriptions = []
-sub_lock = threading.Lock()
+sub_lock = threading.RLock()
 
 def InitConfigIfNeeded():
     global config, log
@@ -58,6 +58,44 @@ def InitConfigIfNeeded():
 
 # Standard VAPID helper / Key generation
 OLD_DUMMY_PUB = "BIJGp_swABVvPbDH8irxlgGR3Z4-z7U6KXevgqEc9hwRYL05IUXUG0dGT8w2wH_LCg_C7dS2c0xQUVTJUkzh5y8"
+
+def RawVapidKeyToSec1Pem(priv_b64):
+    """
+    Convert a 32-byte base64/base64url/raw encoded VAPID private key into RFC 5915 SEC1 PEM format.
+    ASN.1 Sequence Structure (51 bytes DER):
+      - 30 31: SEQUENCE (49 bytes body)
+      - 02 01 01: INTEGER 1 (ecPrivkeyVer1)
+      - 04 20 <32-byte scalar>: OCTET STRING (32 bytes)
+      - A0 0A 06 08 2A 86 48 CE 3D 03 01 07: [0] prime256v1 / secp256r1 OID (12 bytes)
+    """
+    if not priv_b64:
+        return priv_b64
+    if isinstance(priv_b64, (bytes, bytearray)):
+        if len(priv_b64) == 32:
+            der = bytes.fromhex("30310201010420") + bytes(priv_b64) + bytes.fromhex("a00a06082a8648ce3d030107")
+            pem_b64 = base64.b64encode(der).decode("utf-8")
+            return f"-----BEGIN EC PRIVATE KEY-----\n{pem_b64}\n-----END EC PRIVATE KEY-----\n"
+        try:
+            priv_b64 = priv_b64.decode("utf-8")
+        except Exception:
+            return priv_b64
+    if not isinstance(priv_b64, str):
+        return priv_b64
+    if "-----BEGIN" in priv_b64:
+        return priv_b64
+    try:
+        priv_clean = priv_b64.strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=")
+        rem = len(priv_clean) % 4
+        if rem > 0:
+            priv_clean += "=" * (4 - rem)
+        raw_priv = base64.urlsafe_b64decode(priv_clean)
+        if len(raw_priv) == 32:
+            der = bytes.fromhex("30310201010420") + raw_priv + bytes.fromhex("a00a06082a8648ce3d030107")
+            pem_b64 = base64.b64encode(der).decode("utf-8")
+            return f"-----BEGIN EC PRIVATE KEY-----\n{pem_b64}\n-----END EC PRIVATE KEY-----\n"
+    except Exception:
+        pass
+    return priv_b64
 
 def GenerateVapidKeyPair():
     pub, priv = "", ""
@@ -79,14 +117,22 @@ def GenerateVapidKeyPair():
 
     try:
         import subprocess
-        tmp_pem = "/tmp/vapid_gen.pem"
-        subprocess.check_output(["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", tmp_pem])
-        out_pub = subprocess.check_output(["openssl", "ec", "-in", tmp_pem, "-pubout", "-outform", "DER"], stderr=subprocess.DEVNULL)
+        out_pem = subprocess.check_output(
+            ["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-outform", "PEM"],
+            stderr=subprocess.DEVNULL
+        )
+        out_pub = subprocess.check_output(
+            ["openssl", "ec", "-inform", "PEM", "-pubout", "-outform", "DER"],
+            input=out_pem,
+            stderr=subprocess.DEVNULL
+        )
         pub = base64.urlsafe_b64encode(out_pub[-65:]).decode("utf-8").rstrip("=")
-        out_priv_der = subprocess.check_output(["openssl", "ec", "-in", tmp_pem, "-outform", "DER"], stderr=subprocess.DEVNULL)
+        out_priv_der = subprocess.check_output(
+            ["openssl", "ec", "-inform", "PEM", "-outform", "DER"],
+            input=out_pem,
+            stderr=subprocess.DEVNULL
+        )
         priv = base64.urlsafe_b64encode(out_priv_der[7:39]).decode("utf-8").rstrip("=")
-        if os.path.exists(tmp_pem):
-            os.remove(tmp_pem)
         return pub, priv
     except Exception:
         return "", ""
@@ -99,26 +145,82 @@ def ValidateVapidKeys(pub_b64, priv_b64):
     try:
         from cryptography.hazmat.primitives.asymmetric import ec
         from cryptography.hazmat.primitives import serialization
-        priv_bytes = base64.urlsafe_b64decode(priv_b64 + "==")
-        priv_int = int.from_bytes(priv_bytes, "big")
-        priv_key = ec.derive_private_key(priv_int, ec.SECP256R1())
+        if isinstance(priv_b64, str) and "-----BEGIN" in priv_b64:
+            priv_key = serialization.load_pem_private_key(priv_b64.encode("utf-8"), password=None)
+        elif isinstance(priv_b64, (bytes, bytearray)) and b"-----BEGIN" in priv_b64:
+            priv_key = serialization.load_pem_private_key(bytes(priv_b64), password=None)
+        elif isinstance(priv_b64, (bytes, bytearray)) and len(priv_b64) == 32:
+            priv_int = int.from_bytes(bytes(priv_b64), "big")
+            priv_key = ec.derive_private_key(priv_int, ec.SECP256R1())
+        else:
+            priv_clean = priv_b64.strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=") if isinstance(priv_b64, str) else priv_b64.decode("utf-8").strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=")
+            rem = len(priv_clean) % 4
+            if rem > 0:
+                priv_clean += "=" * (4 - rem)
+            priv_bytes = base64.urlsafe_b64decode(priv_clean)
+            if len(priv_bytes) != 32:
+                return False
+            priv_int = int.from_bytes(priv_bytes, "big")
+            priv_key = ec.derive_private_key(priv_int, ec.SECP256R1())
         pub_key = priv_key.public_key()
         pub_bytes = pub_key.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
-        derived_pub_b64 = base64.urlsafe_b64encode(pub_bytes).decode("utf-8").rstrip("=")
-        return derived_pub_b64 == pub_b64
+        if isinstance(pub_b64, (bytes, bytearray)) and len(pub_b64) == 65:
+            expected_raw_pub = bytes(pub_b64)
+        else:
+            pub_clean = pub_b64.strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=") if isinstance(pub_b64, str) else pub_b64.decode("utf-8").strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=")
+            rem = len(pub_clean) % 4
+            if rem > 0:
+                pub_clean += "=" * (4 - rem)
+            expected_raw_pub = base64.urlsafe_b64decode(pub_clean)
+        return pub_bytes == expected_raw_pub
     except Exception:
         pass
 
     try:
         import subprocess
-        priv_bytes = base64.urlsafe_b64decode(priv_b64 + "==")
-        der_head = bytes.fromhex("30770201010420") + priv_bytes + bytes.fromhex("a00a06082a8648ce3d030107")
-        tmp_key = "/tmp/vtest.der"
-        with open(tmp_key, "wb") as f: f.write(der_head)
-        out_pub = subprocess.check_output(["openssl", "ec", "-inform", "DER", "-in", tmp_key, "-pubout", "-outform", "DER"], stderr=subprocess.DEVNULL)
-        if os.path.exists(tmp_key): os.remove(tmp_key)
-        derived_pub_b64 = base64.urlsafe_b64encode(out_pub[-65:]).decode("utf-8").rstrip("=")
-        return derived_pub_b64 == pub_b64
+        if isinstance(priv_b64, str) and "-----BEGIN" in priv_b64:
+            out_pub = subprocess.check_output(
+                ["openssl", "ec", "-inform", "PEM", "-pubout", "-outform", "DER"],
+                input=priv_b64.encode("utf-8"),
+                stderr=subprocess.DEVNULL
+            )
+        elif isinstance(priv_b64, (bytes, bytearray)) and b"-----BEGIN" in priv_b64:
+            out_pub = subprocess.check_output(
+                ["openssl", "ec", "-inform", "PEM", "-pubout", "-outform", "DER"],
+                input=bytes(priv_b64),
+                stderr=subprocess.DEVNULL
+            )
+        elif isinstance(priv_b64, (bytes, bytearray)) and len(priv_b64) == 32:
+            der_head = bytes.fromhex("30310201010420") + bytes(priv_b64) + bytes.fromhex("a00a06082a8648ce3d030107")
+            out_pub = subprocess.check_output(
+                ["openssl", "ec", "-inform", "DER", "-pubout", "-outform", "DER"],
+                input=der_head,
+                stderr=subprocess.DEVNULL
+            )
+        else:
+            priv_clean = priv_b64.strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=") if isinstance(priv_b64, str) else priv_b64.decode("utf-8").strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=")
+            rem = len(priv_clean) % 4
+            if rem > 0:
+                priv_clean += "=" * (4 - rem)
+            priv_bytes = base64.urlsafe_b64decode(priv_clean)
+            if len(priv_bytes) != 32:
+                return False
+            der_head = bytes.fromhex("30310201010420") + priv_bytes + bytes.fromhex("a00a06082a8648ce3d030107")
+            out_pub = subprocess.check_output(
+                ["openssl", "ec", "-inform", "DER", "-pubout", "-outform", "DER"],
+                input=der_head,
+                stderr=subprocess.DEVNULL
+            )
+        out_pub_raw = out_pub[-65:]
+        if isinstance(pub_b64, (bytes, bytearray)) and len(pub_b64) == 65:
+            expected_raw_pub = bytes(pub_b64)
+        else:
+            pub_clean = pub_b64.strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=") if isinstance(pub_b64, str) else pub_b64.decode("utf-8").strip().strip("'\"").replace("\r", "").replace("\n", "").replace(" ", "").rstrip("=")
+            rem = len(pub_clean) % 4
+            if rem > 0:
+                pub_clean += "=" * (4 - rem)
+            expected_raw_pub = base64.urlsafe_b64decode(pub_clean)
+        return out_pub_raw == expected_raw_pub
     except Exception:
         return False
 
@@ -143,7 +245,6 @@ def EnsureVapidKeys():
         if log:
             log.error("Error in EnsureVapidKeys: " + str(e))
         return "", ""
-        return "", ""
 
 # Subscriptions file management
 def GetSubscriptionsFile():
@@ -164,11 +265,9 @@ def LoadSubscriptions():
             if os.path.isfile(sf):
                 with open(sf, "r", encoding="utf-8") as f:
                     subscriptions = json.load(f)
-            else:
-                subscriptions = []
         except Exception as e:
-            log.error("Error loading subscriptions: " + str(e))
-            subscriptions = []
+            if log:
+                log.error("Error loading subscriptions: " + str(e))
 
 def SaveSubscriptions():
     with sub_lock:
@@ -180,7 +279,8 @@ def SaveSubscriptions():
             with open(sf, "w", encoding="utf-8") as f:
                 json.dump(subscriptions, f, indent=2)
         except Exception as e:
-            log.error("Error saving subscriptions: " + str(e))
+            if log:
+                log.error("Error saving subscriptions: " + str(e))
 
 def AddSubscription(sub_data):
     global subscriptions
@@ -189,6 +289,7 @@ def AddSubscription(sub_data):
         return False
     dev_name = sub_data.get("device_name") or "Web Device"
     InitConfigIfNeeded()
+    LoadSubscriptions()
     with sub_lock:
         # Avoid duplicates
         subscriptions = [s for s in subscriptions if s.get("endpoint") != endpoint]
@@ -211,6 +312,7 @@ def RemoveSubscription(endpoint, notify_device=True):
         except Exception as ex_notify:
             if log: log.error("Error sending removal notification: " + str(ex_notify))
 
+    LoadSubscriptions()
     with sub_lock:
         subscriptions = [s for s in subscriptions if s.get("endpoint") != endpoint]
     SaveSubscriptions()
@@ -222,6 +324,7 @@ def UpdateSubscriptionName(endpoint, new_name):
         return False
     InitConfigIfNeeded()
     new_name = new_name.strip()
+    LoadSubscriptions()
     with sub_lock:
         for s in subscriptions:
             if s.get("endpoint") == endpoint:
@@ -290,6 +393,11 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
         except ImportError:
             webpush = None
 
+        try:
+            from py_vapid import Vapid
+        except ImportError:
+            Vapid = None
+
         targets = subscriptions if not target_endpoint else [s for s in subscriptions if s.get("endpoint") == target_endpoint]
         if not targets:
             if log: log.info("No active Web Push subscriptions targetable for payload: " + str(title))
@@ -300,6 +408,37 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
 
         to_remove = []
         push_errors = []
+        priv_pem = RawVapidKeyToSec1Pem(priv)
+        vapid_sub_claim = config.ReadValue("vapid_claims_sub", default="mailto:genmon.push@gmail.com") if config else "mailto:genmon.push@gmail.com"
+        if not vapid_sub_claim or not str(vapid_sub_claim).strip():
+            vapid_sub_claim = "mailto:genmon.push@gmail.com"
+        vapid_sub_claim = str(vapid_sub_claim).strip()
+        if not (vapid_sub_claim.startswith("mailto:") or vapid_sub_claim.startswith("https://") or vapid_sub_claim.startswith("http://")):
+            if "@" in vapid_sub_claim:
+                vapid_sub_claim = f"mailto:{vapid_sub_claim}"
+
+        # Prepare VAPID key for pywebpush:
+        # pywebpush expects a Vapid instance, a PEM file path, or a raw string key.
+        # Passing a raw PEM string directly causes pywebpush's internal Vapid.from_string() to fail with
+        # "ASN.1 parsing error: invalid length".
+        # We pre-instantiate a Vapid instance using Vapid.from_pem() or Vapid.from_string() to guarantee clean execution.
+        vapid_key = None
+        if Vapid is not None:
+            try:
+                if isinstance(priv, Vapid):
+                    vapid_key = priv
+                elif isinstance(priv, str) and "-----BEGIN" in priv:
+                    vapid_key = Vapid.from_pem(priv.encode("utf-8"))
+                elif priv_pem and isinstance(priv_pem, str) and "-----BEGIN" in priv_pem:
+                    vapid_key = Vapid.from_pem(priv_pem.encode("utf-8"))
+                elif priv:
+                    vapid_key = Vapid.from_string(priv if isinstance(priv, str) else priv.decode("utf-8"))
+            except Exception as e_vapid:
+                if log: log.warning(f"Error instantiating Vapid key object: {e_vapid}")
+
+        if vapid_key is None:
+            vapid_key = priv if priv and not (isinstance(priv, str) and "-----BEGIN" in priv) else priv_pem
+
         for sub in list(targets):
             endpoint = sub.get("endpoint")
             dev_label = sub.get("device_name") or "Device"
@@ -307,16 +446,6 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
                 continue
             try:
                 if webpush:
-                    priv_pem = priv
-                    try:
-                        import base64
-                        raw_priv = base64.urlsafe_b64decode(priv + "==")
-                        if len(raw_priv) == 32:
-                            der = bytes.fromhex("30310201010420") + raw_priv + bytes.fromhex("a00a06082a8648ce3d030107")
-                            priv_pem = "-----BEGIN EC PRIVATE KEY-----\n" + base64.b64encode(der).decode("utf-8") + "\n-----END EC PRIVATE KEY-----\n"
-                    except Exception:
-                        pass
-
                     webpush(
                         subscription_info=sub,
                         data=json.dumps({
@@ -325,8 +454,8 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
                             "category": category,
                             "icon": icon
                         }),
-                        vapid_private_key=priv_pem,
-                        vapid_claims={"sub": config.ReadValue("vapid_claims_sub", default="mailto:genmon.push@gmail.com")},
+                        vapid_private_key=vapid_key,
+                        vapid_claims={"sub": vapid_sub_claim},
                         ttl=86400
                     )
                     if log: log.info(f"Successfully dispatched push payload '{title}' to {dev_label} ({endpoint[:40]}...)")
@@ -341,7 +470,11 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
             except Exception as ex_push:
                 err_str = str(ex_push)
                 push_errors.append(err_str)
-                if any(k in err_str for k in ["400", "403", "404", "410", "BadJwtToken"]):
+                resp_status = getattr(getattr(ex_push, "response", None), "status_code", None)
+                resp_text = getattr(getattr(ex_push, "response", None), "text", "") or ""
+                if (resp_status in [400, 403, 404, 410] or
+                    any(k in err_str for k in ["400", "403", "404", "410", "BadJwtToken"]) or
+                    "BadJwtToken" in resp_text):
                     to_remove.append(endpoint)
                     if log: log.warning(f"Push endpoint invalid/expired ({err_str}) for {dev_label}: auto-removing stale subscription.")
                 else:
@@ -360,70 +493,80 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
 
 # Event Handlers
 def OnOutage(Active):
-    if config.ReadValue("notify_outage", return_type=bool, default=True):
+    InitConfigIfNeeded()
+    if config and config.ReadValue("notify_outage", return_type=bool, default=True):
         msg = "Utility Power OUTAGE Detected!" if Active else "Utility Power RESTORED."
         if console: console.info("WebPush Outage: " + msg)
         SendWebPushPayload("Genmon Utility Outage", msg, category="outage")
 
 def OnExercise(Active):
-    if config.ReadValue("notify_exercise", return_type=bool, default=True):
+    InitConfigIfNeeded()
+    if config and config.ReadValue("notify_exercise", return_type=bool, default=True):
         msg = "Generator Started Scheduled Exercise" if Active else "Generator Exercise Finished"
         if console: console.info("WebPush Exercise: " + msg)
         SendWebPushPayload("Genmon Generator Exercise", msg, category="exercise")
 
 def OnRun(Active):
-    if config.ReadValue("notify_exercise", return_type=bool, default=True):
+    InitConfigIfNeeded()
+    if config and config.ReadValue("notify_exercise", return_type=bool, default=True):
         msg = "Generator is RUNNING" if Active else "Generator Stopped Running"
         if console: console.info("WebPush Run: " + msg)
         SendWebPushPayload("Genmon Generator Status", msg, category="info")
 
 def OnRunManual(Active):
-    if config.ReadValue("notify_off_manual", return_type=bool, default=True):
+    InitConfigIfNeeded()
+    if config and config.ReadValue("notify_off_manual", return_type=bool, default=True):
         msg = "Generator RUNNING in MANUAL Mode!" if Active else "Generator Manual Mode Ended"
         if console: console.info("WebPush RunManual: " + msg)
         SendWebPushPayload("Genmon Status Warning", msg, category="warning")
 
 def OnAlarm(Active):
-    if config.ReadValue("notify_error", return_type=bool, default=True):
+    InitConfigIfNeeded()
+    if config and config.ReadValue("notify_error", return_type=bool, default=True):
         msg = "ALARM DETECTED on Generator Controller!" if Active else "Generator Alarm Cleared"
         if console: console.error("WebPush Alarm: " + msg)
         SendWebPushPayload("🚨 Genmon Generator ALARM!", msg, category="error")
 
 def OnService(Active):
-    if config.ReadValue("notify_warning", return_type=bool, default=True):
-        msg = "Generator Service / Maintenance is DUE!" if Active else "Generator Service Warning Cleared"
+    InitConfigIfNeeded()
+    if config and config.ReadValue("notify_warning", return_type=bool, default=True):
         msg = "Generator Service Maintenance REQUIRED!" if Active else "Generator Service Cleared"
         if console: console.info("WebPush Maintenance: " + msg)
         SendWebPushPayload("Genmon Service Due", msg, category="warning")
 
 def OnOff(Active):
-    if config.ReadValue("notify_off_manual", return_type=bool, default=True):
+    InitConfigIfNeeded()
+    if config and config.ReadValue("notify_off_manual", return_type=bool, default=True):
         msg = "Generator Switch Set to OFF!" if Active else "Generator Switch Returned from OFF"
         if console: console.info("WebPush Switch OFF: " + msg)
         SendWebPushPayload("Genmon Switch Off Warning", msg, category="off_manual")
 
 def OnManual(Active):
-    if config.ReadValue("notify_off_manual", return_type=bool, default=True):
+    InitConfigIfNeeded()
+    if config and config.ReadValue("notify_off_manual", return_type=bool, default=True):
         msg = "Generator Switch Set to MANUAL!" if Active else "Generator Switch Returned from MANUAL"
         if console: console.info("WebPush Switch MANUAL: " + msg)
         SendWebPushPayload("Genmon Switch Manual Warning", msg, category="off_manual")
 
 def OnSoftwareUpdate(Active):
-    if config.ReadValue("notify_sw_update", return_type=bool, default=True):
+    InitConfigIfNeeded()
+    if config and config.ReadValue("notify_sw_update", return_type=bool, default=True):
         msg = "Genmon Software Update Available!" if Active else "Genmon Software Up-to-Date"
         if console: console.info("WebPush Update Notice: " + msg)
         SendWebPushPayload("Genmon Software Update", msg, category="sw_update")
 
 def OnFuelState(Active):
-    if config.ReadValue("notify_fuel", return_type=bool, default=True):
+    InitConfigIfNeeded()
+    if config and config.ReadValue("notify_fuel", return_type=bool, default=True):
         msg = "Fuel Level Warning!" if Active else "Fuel Level Normal"
         if console: console.info("WebPush Fuel State: " + msg)
         SendWebPushPayload("Genmon Fuel Warning", msg, category="fuel")
 
 def OnPiState(Active):
-    if config.ReadValue("notify_pi_state", return_type=bool, default=True):
+    InitConfigIfNeeded()
+    if config and config.ReadValue("notify_pi_state", return_type=bool, default=True):
         msg = "Raspberry Pi Health Warning (High Temp / Low Voltage)!" if Active else "Pi Health Normal"
-        console.warning("WebPush PiState: " + msg)
+        if console: console.warning("WebPush PiState: " + msg)
         SendWebPushPayload("Genmon System Warning", msg, category="warning")
 
 def signal_handler(sig, frame):
