@@ -5185,16 +5185,15 @@ class Evolution(GeneratorController):
             else:
                 return "RUNNING-MANUAL"
                 
+        if "off" in SwitchValue.lower():
+            return "OFF"
+        elif "manual" in SwitchValue.lower():
+            return "MANUAL"
+            
         if self.ServiceIsDue():
             return "SERVICEDUE"
 
-        else:
-            if "off" in SwitchValue.lower():
-                return "OFF"
-            elif "manual" in SwitchValue.lower():
-                return "MANUAL"
-            else:
-                return "READY"
+        return "READY"
 
     # ------------ Evolution:ServiceIsDue ---------------------------------------
     def ServiceIsDue(self, AlarmOnly=False):

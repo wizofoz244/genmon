@@ -3778,14 +3778,14 @@ class HPanel(GeneratorController):
                 return "RUNNING"
             elif IsRunning and SwitchState == "manual":
                 return "RUNNING-MANUAL"
-            elif ServiceDue:
-                return "SERVICEDUE"
-            elif SwitchState == "manual":
-                return "MANUAL"
-            elif SwitchState == "auto":
-                return "READY"
             elif SwitchState == "off":
                 return "OFF"
+            elif SwitchState == "manual":
+                return "MANUAL"
+            elif ServiceDue:
+                return "SERVICEDUE"
+            elif SwitchState == "auto":
+                return "READY"
             else:
                 self.FeedbackPipe.SendFeedback(
                     "Base State",

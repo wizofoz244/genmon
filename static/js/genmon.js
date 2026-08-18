@@ -1883,6 +1883,13 @@ var Pages = {
         }
       });
 
+      /* Click script logs tile -> navigate to #scriptlogs */
+      $c.on('click', '[data-tile="scriptlogs"]', function(e) {
+        if (S.editMode) return;
+        if ($(e.target).closest('.tile-hide-btn, .tile-edit-controls, .tile-drag-handle').length) return;
+        Router.go('scriptlogs');
+      });
+
       /* Re-add tile from drawer */
       $c.on('click', '.drawer-tile', function() {
         var key = $(this).data('tile');
@@ -1904,6 +1911,7 @@ var Pages = {
         }
         else if (key === 'clock') $new = $(self._clockTileHtml());
         else if (key === 'weather') $new = $(self._weatherTileHtml());
+        else if (key === 'scriptlogs') $new = $(self._scriptLogsTileHtml());
         else if (km.keyToGauge[key] !== undefined) {
           var rgi = km.keyToGauge[key];
           $new = $(self._tileHtml(key, rgi, tiles[rgi]));
@@ -2161,7 +2169,7 @@ var Pages = {
 
     _scriptLogsTileHtml: function() {
       var savedSize = Store.getTileSize('scriptlogs') || 'md';
-      return '<div class="tile tile-' + esc(savedSize) + '" role="listitem" data-tile="scriptlogs" data-size="' + esc(savedSize) + '" draggable="false" style="cursor:pointer;" onclick="if(!S.editMode) Router.go(\'scriptlogs\');">' +
+      return '<div class="tile tile-' + esc(savedSize) + '" role="listitem" data-tile="scriptlogs" data-size="' + esc(savedSize) + '" draggable="false" style="cursor:pointer;">' +
         '<button type="button" class="tile-hide-btn" title="Hide tile" tabindex="-1" aria-hidden="true">&times;</button>' +
         '<div class="tile-drag-handle" title="Drag to reorder" aria-hidden="true">' + icon('logs') + '</div>' +
         '<div class="tile-edit-controls" style="display:none" aria-hidden="true"><div class="tile-ctrl-row">' +

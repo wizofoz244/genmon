@@ -3239,12 +3239,12 @@ class PowerZonePro(GeneratorController):
                 return "RUNNING"
             elif IsRunning and SwitchState == "manual":
                 return "RUNNING-MANUAL"
-            elif ServiceDue:
-                return "SERVICEDUE"
             elif IsStopped and SwitchState == "off":
                 return "OFF"
             elif SwitchState == "manual":
                 return "MANUAL"
+            elif ServiceDue:
+                return "SERVICEDUE"
             elif SwitchState == "auto":
                 return "READY"
             elif SwitchState == "off":
