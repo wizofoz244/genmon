@@ -468,7 +468,7 @@ def SendWebPushPayload(title, message, category="info", icon="/icons/icon-192x19
                             "icon": icon
                         }),
                         vapid_private_key=vapid_key,
-                        vapid_claims={"sub": vapid_sub_claim},
+                        vapid_claims={"sub": vapid_sub_claim, "exp": int(time.time()) + 12 * 3600},
                         ttl=86400
                     )
                     if log: log.info(f"Successfully dispatched push payload '{title}' to {dev_label} ({endpoint[:40]}...)")
