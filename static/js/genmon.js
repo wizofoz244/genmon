@@ -5154,6 +5154,19 @@ var Pages = {
                   '<div class="cert-mode-cards">';
                 modes.forEach(function(m) {
                   var sel = m.val === curMode ? ' cert-mode-card-sel' : '';
+                  var expDays = certInfo.modes_expiry && typeof certInfo.modes_expiry[m.val] !== 'undefined' ? certInfo.modes_expiry[m.val] : null;
+                  if (expDays === null && m.val === certInfo.mode && typeof certInfo.days_remaining !== 'undefined') {
+                    expDays = certInfo.days_remaining;
+                  }
+                  var expBadge = '';
+                  if (expDays !== null && typeof expDays !== 'undefined') {
+                    var colorStyle = expDays <= 30 ? 'background:rgba(245,158,11,.18);color:#d97706;' : 'background:rgba(34,197,94,.15);color:#16a34a;';
+                    if (expDays === 0) colorStyle = 'background:rgba(239,68,68,.18);color:#dc2626;';
+                    expBadge = '<span class="cert-badge cert-badge-exp" data-exp-mode="'+m.val+'" style="'+colorStyle+'font-weight:600">' + expDays + 'd left</span>';
+                  } else {
+                    expBadge = '<span class="cert-badge cert-badge-exp" data-exp-mode="'+m.val+'" style="display:none"></span>';
+                  }
+
                   h += '<div class="cert-mode-card'+sel+'" data-mode="'+m.val+'">' +
                     '<div class="cert-mode-card-hdr">' + icon(m.icon) +
                     '<span>'+esc(m.title)+'</span></div>' +
@@ -5161,6 +5174,7 @@ var Pages = {
                     '<div class="cert-mode-badges">' +
                     '<span class="cert-badge cert-badge-pro">'+esc(m.pro)+'</span>' +
                     '<span class="cert-badge cert-badge-con">'+esc(m.con)+'</span>' +
+                    expBadge +
                     '</div></div>';
                 });
                 h += '</div>'; /* .cert-mode-cards */
@@ -5749,6 +5763,21 @@ var Pages = {
         var $certStatus = $w.find('#cert-status');
         if (httpsOn) {
           $certStatus.html(_renderCertStatusHtml(certMode, _certInfo, location.protocol === 'https:'));
+        }
+        /* Update days-left badges in cards */
+        if (_certInfo) {
+          $w.find('.cert-badge-exp').each(function() {
+            var modeKey = $(this).data('exp-mode');
+            var d = _certInfo.modes_expiry && typeof _certInfo.modes_expiry[modeKey] !== 'undefined' ? _certInfo.modes_expiry[modeKey] : null;
+            if (d === null && modeKey === _certInfo.mode && typeof _certInfo.days_remaining !== 'undefined') {
+              d = _certInfo.days_remaining;
+            }
+            if (d !== null && typeof d !== 'undefined') {
+              var colorStyle = d <= 30 ? 'background:rgba(245,158,11,.18);color:#d97706;' : 'background:rgba(34,197,94,.15);color:#16a34a;';
+              if (d === 0) colorStyle = 'background:rgba(239,68,68,.18);color:#dc2626;';
+              $(this).attr('style', colorStyle + 'font-weight:600').text(d + 'd left').show();
+            }
+          });
         }
         _secSlide($certStatus, httpsOn, dur);
         /* MFA: requires HTTPS running + password auth already active.

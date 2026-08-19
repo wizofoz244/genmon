@@ -6678,16 +6678,33 @@ def _get_cert_info():
                     info["issuer"] = iss
             else:
                 info["detail"] = "Tailscale certificate will be fetched when HTTPS is enabled"
-        elif CertMode == "custom":
-            cert_file = ConfigFiles[GENMON_CONFIG].ReadValue("certfile") if GENMON_CONFIG in ConfigFiles else ""
-            key_file = ConfigFiles[GENMON_CONFIG].ReadValue("keyfile") if GENMON_CONFIG in ConfigFiles else ""
-            info["certfile"] = cert_file or ""
-            info["keyfile"] = key_file or ""
-            if cert_file and os.path.isfile(cert_file):
-                c = _load_cert(cert_file)
-                na = _not_after(c)
-                info["expiry"] = _date(na)
-                info["days_remaining"] = _days_left(na)
+        # Collect days remaining for all known cert modes
+        modes_expiry = {}
+        p_ss = os.path.join(ConfigFilePath, "selfsigned.crt")
+        if os.path.isfile(p_ss):
+            try:
+                modes_expiry["selfsigned"] = _days_left(_not_after(_load_cert(p_ss)))
+            except Exception:
+                pass
+        p_srv = os.path.join(ConfigFilePath, "server.crt")
+        if os.path.isfile(p_srv):
+            try:
+                modes_expiry["localca"] = _days_left(_not_after(_load_cert(p_srv)))
+            except Exception:
+                pass
+        p_ts = os.path.join(ConfigFilePath, "tailscale.crt")
+        if os.path.isfile(p_ts):
+            try:
+                modes_expiry["tailscale"] = _days_left(_not_after(_load_cert(p_ts)))
+            except Exception:
+                pass
+        cert_file = ConfigFiles[GENMON_CONFIG].ReadValue("certfile") if GENMON_CONFIG in ConfigFiles else ""
+        if cert_file and os.path.isfile(cert_file):
+            try:
+                modes_expiry["custom"] = _days_left(_not_after(_load_cert(cert_file)))
+            except Exception:
+                pass
+        info["modes_expiry"] = modes_expiry
     except Exception as e1:
         info["error"] = str(e1)
     return _json.dumps(info)
