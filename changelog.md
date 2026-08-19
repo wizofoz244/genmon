@@ -1,6 +1,16 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Oz Custom Addons v1.2.0 - 2026-08-18
+- **Refactoring to Google Standards**: Refactored all custom Python modules (`genwebpush.py`, `genmaint_sync.py`, test suite) to strict Google Python Style Guide (typing, Google docstrings with Args/Returns/Raises, modularity).
+- **Google Frontend Standards**: Applied Google JavaScript and HTML/CSS standards (JSDoc comments, clean DOM handling, accessible semantic markup) across Web UI and Service Worker (`sw.js`).
+- **PWA Web Push Notifications (`addon/genwebpush.py`)**: Added native Web Push alerts supporting RFC 8292 VAPID encryption, Apple APNs / Safari PWA support on iOS and macOS, custom device labeling, and specific alarm reason extraction.
+- **Wi-Fi Band Detection**: Added operating frequency band detection (2.4 GHz / 5 GHz / 6 GHz) on dashboard signal tile and platform diagnostics.
+- **Script Logs Viewer & Dashboard Tile**: Added dedicated Script Logs page (`/#/logs`), live error/warning badge highlighting, error acknowledgment, and dashboard tile navigation.
+- **Manual Backups Web Console**: Live streaming execution console for Daily Genmon Backups and Weekly SD Card Image routines directly from the web interface.
+- **Web UI Session Security**: Added global "Logout All Devices" session revocation, secure cookie clearing on logout, Passkey / WebAuthn, and MFA backup codes.
+- **Automated Test Suite**: Added 57 unit and integration tests across `tests/unit/` and `tests/integration/` with GitHub Actions CI automation.
+
 ## 2.0.02 -2026-08-04
 - New add on for Hubitat Elevation hub, Thanks @bdwilson
 - Support for PowerZone 200. Note: a special cable is required. (Thanks @LSGONE, @BillyEll, @skipfire and @gm58)

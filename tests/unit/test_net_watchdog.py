@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""Unit test suite for net_watchdog.sh and Genmon web log integration."""
+"""Unit test suite for net_watchdog.sh and Genmon web log integration.
+
+Validates Bash syntax safety, IP address regex derivation, and genserv log inspection
+endpoints per Google Python Style Guide.
+"""
+
+from __future__ import annotations
 
 import os
 import re
 import subprocess
-import sys
 import unittest
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import mock_open, patch
 
 import tests.conftest
 import genserv
@@ -17,8 +22,14 @@ class TestNetWatchdog(unittest.TestCase):
 
     def test_bash_script_syntax(self) -> None:
         """Validates that net_watchdog.sh contains clean Bash syntax with zero syntax errors."""
-        script_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "net_watchdog.sh")
-        self.assertTrue(os.path.exists(script_path), f"net_watchdog.sh should exist at {script_path}.")
+        script_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            "net_watchdog.sh",
+        )
+        self.assertTrue(
+            os.path.exists(script_path),
+            f"net_watchdog.sh should exist at {script_path}.",
+        )
 
         result = subprocess.run(
             ["bash", "-n", script_path],
@@ -49,8 +60,9 @@ class TestNetWatchdog(unittest.TestCase):
         """Tests that genserv.get_script_logs_json() returns net_watchdog_log with severity detection."""
         sample_log = (
             "[2026-08-02 16:15:00] [INFO] Connected to 192.168.1.1 on wlan0.\n"
-            "[2026-08-02 16:18:00] [WARN] Failed to ping 192.168.1.1 on wlan0.\n"
-            "[2026-08-02 16:21:00] [ERROR] Router unreachable. Initiating reboot.\n"
+            "[2026-08-02 16:18:00] [WARN] Failed to ping 192.168.1.1 on"
+            " wlan0.\n[2026-08-02 16:21:00] [ERROR] Router unreachable."
+            " Initiating reboot.\n"
         )
         with patch("genserv.os.path.exists", return_value=True):
             with patch("builtins.open", mock_open(read_data=sample_log)):
@@ -66,11 +78,16 @@ class TestNetWatchdog(unittest.TestCase):
         target_path = "/var/log/net-watchdog.log"
         m_open = mock_open()
         with patch("genserv.HasWriteAccess", return_value=True):
-            with patch("genserv.os.path.exists", side_effect=lambda p: p == target_path):
+            with patch(
+                "genserv.os.path.exists",
+                side_effect=lambda p: p == target_path,
+            ):
                 with patch("builtins.open", m_open):
                     res_str = genserv.clear_script_log_json("watchdog")
                     self.assertIn('"result": "OK"', res_str)
-                    m_open.assert_called_with(target_path, "w", encoding="utf-8")
+                    m_open.assert_called_with(
+                        target_path, "w", encoding="utf-8"
+                    )
 
 
 if __name__ == "__main__":
