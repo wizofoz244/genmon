@@ -123,6 +123,38 @@ class TestCertRenewal(unittest.TestCase):
         self.assertTrue(hasattr(genserv, "security_cert_info_endpoint"))
         self.assertTrue(hasattr(genserv, "StartCertRenewalWatchdog"))
 
+    def test_check_and_alert_cert_expiration_under_3_days(self) -> None:
+        """Tests that _check_and_alert_cert_expiration triggers push and email alerts when <= 3 days left."""
+        genserv._last_cert_expiry_alert_date = None
+        mock_info = {
+            "mode": "tailscale",
+            "days_remaining": 3,
+            "srv_expiry": "2026-08-21",
+        }
+        with patch("addon.genwebpush.SendWebPushPayload") as mock_push:
+            with patch("genmonlib.mymail.MyMail") as mock_mail_cls:
+                mock_mail_inst = MagicMock()
+                mock_mail_cls.return_value = mock_mail_inst
+                genserv._check_and_alert_cert_expiration(mock_info)
+                mock_push.assert_called_once()
+                self.assertIn("TLS Certificate Expiring Soon", mock_push.call_args[1]["title"])
+                mock_mail_inst.sendEmail.assert_called_once()
+                self.assertIn("TLS Certificate Expiring", mock_mail_inst.sendEmail.call_args[0][0])
+
+    def test_check_and_alert_cert_expiration_over_3_days_no_alert(self) -> None:
+        """Tests that _check_and_alert_cert_expiration does not trigger alerts when > 3 days left."""
+        genserv._last_cert_expiry_alert_date = None
+        mock_info = {
+            "mode": "localca",
+            "days_remaining": 30,
+            "srv_expiry": "2026-09-17",
+        }
+        with patch("addon.genwebpush.SendWebPushPayload") as mock_push:
+            with patch("genmonlib.mymail.MyMail") as mock_mail_cls:
+                genserv._check_and_alert_cert_expiration(mock_info)
+                mock_push.assert_not_called()
+                mock_mail_cls.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

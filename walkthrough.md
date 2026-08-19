@@ -235,7 +235,8 @@ This ensures state-modifying requests (`POST /api/webpush/subscribe`, `POST /api
 Tailscale issues Let's Encrypt certificates with a strict **90-day validity period**. To prevent silent expiration outages:
 1. **`cert_mode = tailscale`**: Automatically obtains certificates via `tailscale cert <node>.ts.net`.
 2. **Background Watchdog Daemon (`StartCertRenewalWatchdog`)**: Runs every 12 hours in `genserv.py`, automatically executing `tailscale cert` whenever a certificate is within **30 days** of expiring.
-3. **Manual Regeneration UI**: Administrators can click the **`[ 🔄 Renew / Regenerate Certificate ]`** button under **Settings → Security Settings** to immediately fetch a fresh certificate or re-generate LAN SAN entries with real-time UI status updates.
+3. **3-Day Expiration Push & Email Alerts**: If a certificate enters the final **3-day expiration window**, an urgent Web Push notification and email alert via `mymail` are dispatched daily with direct renewal guidance.
+4. **Manual Regeneration UI**: Administrators can click the **`[ 🔄 Renew / Regenerate Certificate ]`** button under **Settings → Security Settings** to immediately fetch a fresh certificate or re-generate LAN SAN entries with real-time UI status updates and dynamic remaining-day badges.
 
 ---
 

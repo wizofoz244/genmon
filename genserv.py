@@ -6533,21 +6533,99 @@ CertWatchdogRunning = False
 CertWatchdogEvent = threading.Event()
 
 
+_last_cert_expiry_alert_date = None
+
+
+# -------------------------------------------------------------------------------
+def _check_and_alert_cert_expiration(info_dict=None):
+    """Check certificate expiration days and dispatch Web Push and Email alerts if <= 3 days remaining."""
+    global _last_cert_expiry_alert_date, ConfigFilePath, loglocation
+    import datetime as _dt
+    import json
+    import socket
+
+    if not info_dict:
+        try:
+            info_dict = json.loads(_get_cert_info())
+        except Exception:
+            return
+
+    days_left = info_dict.get("days_remaining")
+    if days_left is None or days_left > 3:
+        return
+
+    today_str = _dt.date.today().isoformat()
+    if _last_cert_expiry_alert_date == today_str:
+        return  # Alert already dispatched today
+
+    _last_cert_expiry_alert_date = today_str
+    mode = info_dict.get("mode", "TLS")
+    expiry_date = info_dict.get("srv_expiry") or info_dict.get("expiry") or "soon"
+
+    day_text = (
+        "today"
+        if days_left == 0
+        else (f"in {days_left} day" if days_left == 1 else f"in {days_left} days")
+    )
+    title = "⚠️ TLS Certificate Expiring Soon"
+    body = (
+        f"Your Genmon TLS certificate ({mode}) expires {day_text} (on {expiry_date}). "
+        "Please renew it in Settings -> Security Settings."
+    )
+
+    # 1. Dispatch Web Push notification
+    try:
+        from addon.genwebpush import SendWebPushPayload
+
+        SendWebPushPayload(
+            title=title,
+            body=body,
+            category="warning",
+        )
+        LogDebug(f"Dispatched cert expiration Web Push alert ({days_left} days left).")
+    except Exception as e_push:
+        LogDebug("Could not dispatch cert expiry Web Push alert: " + str(e_push))
+
+    # 2. Dispatch Email alert
+    try:
+        from genmonlib.mymail import MyMail
+
+        mail_inst = MyMail(ConfigFilePath=ConfigFilePath, loglocation=loglocation)
+        email_subj = f"⚠️ Genmon Alert: TLS Certificate Expiring {day_text.title()}"
+        email_body = (
+            f"Genmon Alert:\n\n"
+            f"Your Genmon HTTPS certificate ({mode}) is set to expire {day_text} (on {expiry_date}).\n\n"
+            f"If automatic renewal did not complete, please log into your Genmon dashboard, "
+            f"navigate to Settings -> Security Settings, and click 'Renew / Regenerate Certificate'.\n\n"
+            f"Server: {socket.gethostname() or 'Genmon'}\n"
+        )
+        if hasattr(mail_inst, "sendEmail"):
+            mail_inst.sendEmail(email_subj, email_body)
+            LogDebug(f"Dispatched cert expiration email alert ({days_left} days left).")
+    except Exception as e_mail:
+        LogDebug("Could not send cert expiry email alert: " + str(e_mail))
+
+
 def _cert_renewal_watchdog_loop():
-    """Background watchdog thread that periodically checks for expiring certs and auto-renews them."""
+    """Background watchdog thread that periodically checks for expiring certs, auto-renews, and alerts."""
     LogDebug("Certificate renewal watchdog thread started.")
     while not CertWatchdogEvent.is_set():
+        try:
+            if bUseSecureHTTP:
+                LogDebug("Certificate renewal watchdog: checking certificate expiration...")
+                if CertMode in ("tailscale", "localca"):
+                    success, msg, info = renew_or_regenerate_cert(force=False)
+                    if success:
+                        LogDebug("Certificate renewal watchdog: " + str(msg))
+                    _check_and_alert_cert_expiration(info)
+                else:
+                    _check_and_alert_cert_expiration()
+        except Exception as e1:
+            LogErrorLine("Certificate renewal watchdog error: " + str(e1))
+
         # Sleep for 12 hours between expiration checks
         if CertWatchdogEvent.wait(timeout=43200):
             break
-        try:
-            if bUseSecureHTTP and CertMode in ("tailscale", "localca"):
-                LogDebug("Certificate renewal watchdog: checking certificate expiration...")
-                success, msg, info = renew_or_regenerate_cert(force=False)
-                if success:
-                    LogDebug("Certificate renewal watchdog: " + str(msg))
-        except Exception as e1:
-            LogErrorLine("Certificate renewal watchdog error: " + str(e1))
 
 
 def StartCertRenewalWatchdog():

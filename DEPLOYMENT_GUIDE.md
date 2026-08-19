@@ -232,7 +232,8 @@ Genmon offers first-class support for Tailscale HTTPS and Tailscale Funnel:
 ### Certificate Modes & Auto-Renewal
 - **`cert_mode = tailscale`**: Automatically obtains and provisions Let's Encrypt certificates using the host's `tailscale cert` command.
 - **90-Day Lifecycle & Auto-Renewal**: Because Tailscale/Let's Encrypt certificates have a strict 90-day validity period, Genmon runs a background **Certificate Renewal Watchdog** (checked every 12 hours) that automatically executes `tailscale cert` when `< 30 days` remain.
-- **Manual Regeneration UI**: A dedicated **`[ 🔄 Renew / Regenerate Certificate ]`** action button in **Settings → Security Settings** allows admins to trigger immediate renewal or update network SAN lists on demand.
+- **3-Day Expiration Push & Email Alert**: If any active certificate is within **3 days** of expiring, the watchdog automatically dispatches an urgent **Web Push Notification** to all subscribed devices and an **Email Alert** via `mymail` with renewal instructions.
+- **Manual Regeneration UI**: A dedicated **`[ 🔄 Renew / Regenerate Certificate ]`** action button in **Settings → Security Settings** allows admins to trigger immediate renewal or update network SAN lists on demand with live remaining-day badges on each mode card.
 - **Tailscale Funnel**: Listens on public port `443` and proxies traffic to `https+insecure://127.0.0.1:8443`.
 
 ```bash
