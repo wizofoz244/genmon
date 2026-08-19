@@ -3087,12 +3087,17 @@ var Pages = {
       var cs = getComputedStyle(document.documentElement);
       var gridC = cs.getPropertyValue('--chart-grid').trim() || 'rgba(148,163,184,.1)';
       var tickC = cs.getPropertyValue('--chart-tick').trim() || '#94a3b8';
+      var isVolt = /volt|v$/i.test(sensorName);
       var chart = new Chart(ctx, {
         type:'line',
         data:{ datasets:[{
-          label:'°', data:[], borderColor:'#f59e0b',
-          backgroundColor:'rgba(245,158,11,.1)', tension:0, fill:true,
-          pointRadius:0, pointBackgroundColor:'#f59e0b', pointBorderColor:'#f59e0b'
+          label: isVolt ? 'V' : '°', data:[],
+          borderColor: isVolt ? '#3b82f6' : '#f59e0b',
+          backgroundColor: isVolt ? 'rgba(59,130,246,.12)' : 'rgba(245,158,11,.1)',
+          tension:0, fill:true,
+          pointRadius:0,
+          pointBackgroundColor: isVolt ? '#3b82f6' : '#f59e0b',
+          pointBorderColor: isVolt ? '#3b82f6' : '#f59e0b'
         }]},
         options:{
           responsive:true, maintainAspectRatio:false,
@@ -3125,17 +3130,38 @@ var Pages = {
                 axis.ticks = ticks;
               }
             }},
-            y:{display:true, grid:{color:gridC}, ticks:{color:tickC}}
+            y:{
+              display:true,
+              grid:{color:gridC},
+              ticks:{
+                color:tickC,
+                callback: function(val) {
+                  return isVolt ? (val.toFixed(2) + ' V') : val;
+                }
+              }
+            }
           },
-          plugins:{legend:{display:false},tooltip:{callbacks:{title:function(items){
-            if(!items.length)return '';
-            var d=new Date(items[0].parsed.x);
-            var mm=String(d.getMonth()+1).padStart(2,'0');
-            var dd=String(d.getDate()).padStart(2,'0');
-            var hh=String(d.getHours()).padStart(2,'0');
-            var mi=String(d.getMinutes()).padStart(2,'0');
-            return mm+'/'+dd+' '+hh+':'+mi;
-          }}}}, animation:{duration:400}
+          plugins:{
+            legend:{display:false},
+            tooltip:{
+              callbacks:{
+                title:function(items){
+                  if(!items.length)return '';
+                  var d=new Date(items[0].parsed.x);
+                  var mm=String(d.getMonth()+1).padStart(2,'0');
+                  var dd=String(d.getDate()).padStart(2,'0');
+                  var hh=String(d.getHours()).padStart(2,'0');
+                  var mi=String(d.getMinutes()).padStart(2,'0');
+                  return mm+'/'+dd+' '+hh+':'+mi;
+                },
+                label:function(item){
+                  var v = item.parsed.y;
+                  return isVolt ? (v.toFixed(4) + ' V') : (v + '°');
+                }
+              }
+            }
+          },
+          animation:{duration:400}
         }
       });
       this._tempCharts[sensorName] = { chart: chart, rawData: null };
@@ -3159,12 +3185,22 @@ var Pages = {
           try {
             var parts = raw.split(' ');
             if (parts.length === 2) {
-              var dp = parts[0].split('/');
+              var isIso = parts[0].indexOf('-') >= 0;
+              var dp = isIso ? parts[0].split('-') : parts[0].split('/');
               var tp = parts[1].split(':');
               if (dp.length === 3 && tp.length >= 2) {
-                var yr = parseInt(dp[2], 10);
-                if (yr < 100) yr += 2000;
-                dt = new Date(yr, parseInt(dp[0], 10) - 1, parseInt(dp[1], 10),
+                var yr, mo, day;
+                if (isIso) {
+                  yr = parseInt(dp[0], 10);
+                  mo = parseInt(dp[1], 10) - 1;
+                  day = parseInt(dp[2], 10);
+                } else {
+                  yr = parseInt(dp[2], 10);
+                  if (yr < 100) yr += 2000;
+                  mo = parseInt(dp[0], 10) - 1;
+                  day = parseInt(dp[1], 10);
+                }
+                dt = new Date(yr, mo, day,
                               parseInt(tp[0], 10), parseInt(tp[1], 10), parseInt(tp[2] || 0, 10));
               }
             }
@@ -7239,7 +7275,7 @@ function init() {
         $('#site-name').text(data.sitename);
         document.title = data.sitename + ' \u2014 Genmon';
       }
-      var addonVersion = 'Oz Custom Addons v1.2.1';
+      var addonVersion = 'Oz Custom Addons v1.3.0';
       if (data.version) $('#footer-version').text('Genmon ' + data.version + ' \u2014 ' + addonVersion);
 
       /* Enable logout & cache purge button for all users */
