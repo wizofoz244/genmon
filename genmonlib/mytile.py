@@ -148,6 +148,29 @@ class MyTile(MyCommon):
                 self.DefaultSize = self.SetDefault(self.DefaultSize, 2)
                 self.TileType = "gauge"
 
+            elif self.Type.lower() in ("voltage", "corevoltage"):
+                self.Nominal = self.SetDefault(self.Nominal, 1.35)
+                self.Minimum = self.SetDefault(self.Minimum, 0.8)
+                self.Maximum = self.SetDefault(self.Maximum, 1.6)
+                self.Divisions = self.SetDefault(self.Divisions, 4)
+                self.SubDivisions = self.SetDefault(self.SubDivisions, 2)
+                self.Labels = self.SetDefault(
+                    self.Labels,
+                    [0.8, 1.0, 1.2, 1.4, 1.6],
+                )
+                values = [
+                    self.Minimum,
+                    1.20,
+                    1.25,
+                    self.Maximum,
+                ]
+                colors = [self.RED, self.YELLOW, self.GREEN]
+                self.ColorZones = self.SetDefault(
+                    self.ColorZones, self.CreateColorZoneList(values, colors)
+                )
+                self.DefaultSize = self.SetDefault(self.DefaultSize, 2)
+                self.TileType = "gauge"
+
             elif self.Type.lower() == "current":
                 self.Nominal = self.SetDefault(self.Nominal, 100)
                 self.Minimum = self.SetDefault(self.Minimum, 0)

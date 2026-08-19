@@ -4716,6 +4716,28 @@ def ReadAdvancedSettingsFromFile():
                     GENMON_SECTION,
                     "useraspberrypicputempgauge",
                 ]
+                ConfigSettings["use_pi_power_monitor"] = [
+                    "boolean",
+                    "Show Pi Voltage Gauge / Graph",
+                    110,
+                    True,
+                    "",
+                    0,
+                    GENMON_CONFIG,
+                    GENMON_SECTION,
+                    "use_pi_power_monitor",
+                ]
+                ConfigSettings["pi_power_log_path"] = [
+                    "string",
+                    "Pi Power Monitor Log Path",
+                    111,
+                    "/var/log/pi_power_monitor.log",
+                    "",
+                    0,
+                    GENMON_CONFIG,
+                    GENMON_SECTION,
+                    "pi_power_log_path",
+                ]
         except:
             pass
 
