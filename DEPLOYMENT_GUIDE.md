@@ -364,4 +364,79 @@ Add the following entry to execute the watchdog every 3 minutes:
 */3 * * * * /home/genmonpi/genmon/net_watchdog.sh
 ```
 
+---
+
+## 11. Tailscale Funnel & Remote HTTPS Deployment
+
+Tailscale Funnel exposes the Genmon web interface to the public internet with a valid, automated Let's Encrypt certificate over HTTPS port 443.
+
+### Recommended Port Architecture
+- **Genmon HTTPS Backend (`genserv.py`)**: Configured to listen on port `8443` (to prevent port binding conflicts on privileged port 443).
+- **Tailscale Funnel**: Listens on public port `443` and proxies traffic to `https+insecure://127.0.0.1:8443`.
+
+### Setup Instructions
+
+1. **Configure Genmon HTTPS Port in `/etc/genmon/genmon.conf`**:
+   ```ini
+   usehttps = True
+   https_port = 8443
+   http_user = YOUR_ADMIN_USERNAME
+   http_pass = YOUR_ADMIN_PASSWORD
+   ```
+   Restart Genmon:
+   ```bash
+   sudo ./startgenmon.sh restart
+   ```
+
+2. **Configure Tailscale Funnel**:
+   Run the background Funnel command:
+   ```bash
+   sudo tailscale funnel --bg https+insecure://127.0.0.1:8443
+   ```
+
+3. **Verify Funnel Status**:
+   ```bash
+   tailscale funnel status
+   ```
+   Expected output:
+   ```text
+   # Funnel on:
+   #     - https://genmon.YOUR-TAILNET.ts.net
+
+   https://genmon.YOUR-TAILNET.ts.net (Funnel on)
+   |-- / proxy https+insecure://127.0.0.1:8443
+   ```
+
+4. **Verify Port Listeners on Raspberry Pi**:
+   ```bash
+   sudo ss -tulpn | grep -E 'python|genserv|443|8443'
+   ```
+   - `python` (`genserv`) listening on `0.0.0.0:8443`
+   - `tailscaled` listening on `100.x.y.z:443`
+
+---
+
+## 12. PWA Web Push Notification System (`addon/genwebpush.py`)
+
+A standalone push notification daemon and PWA service worker integrating real-time alerts on iOS (Safari PWA), macOS, Android (Chrome), and Windows.
+
+### Key Capabilities & Architecture
+- **VAPID RFC 8292 Key Generation**: Auto-generates and persists NIST P-256 EC VAPID keypairs in `genwebpush.conf`.
+- **Apple APNs Compatible JWS**: Formats raw 64-byte `r || s` ES256 signatures and strict `vapid t=..., k=...` headers for Apple Web Push endpoints (`web.push.apple.com`).
+- **AES-128-GCM Payload Encryption**: Uses `http_ece` and `pywebpush` for standard encrypted web push payloads.
+- **Dynamic Device Management**: Automatically recognizes hardware models (iPhone, iPad, Mac Desktop, Android, Windows) and allows setting and editing custom device names in the UI.
+- **Real-Time Generator Event Triggers**: Dispatches push notifications for:
+  - 🚨 Generator Alarms (with specific fault code extraction)
+  - ⚡ Utility Outages & Restorations
+  - 🔄 Scheduled Exercise Start & Stop
+  - 🟢 Generator Running & Stopped State Transitions
+  - 📴 Switch Changes to OFF or MANUAL
+  - ⛽ Fuel Level Warnings
+  - 🌡️ Raspberry Pi Hardware Health (High Temp / Low Voltage)
+  - ℹ️ Software Updates & System Notices
+
+### UI Management
+- Click the **🔔 Push Alert Settings** button in the top navigation bar to subscribe devices, customize device labels, set notification preferences, and configure the Apple APNs VAPID contact email.
+
+
 
