@@ -586,12 +586,79 @@ class MyPlatform(MyCommon):
                                 + " dBm"
                             }
                         )
+            band = self.GetWiFiBand(adapter)
+            if band != None and band != "":
+                WiFiInfo.append({"WLAN Band": band})
             essid = self.GetWiFiSSID(adapter)
             if essid != None and essid != "":
                 WiFiInfo.append({"WLAN ESSID": essid})
         except Exception as e1:
             pass
         return WiFiInfo
+
+    # ------------ MyPlatform::GetWiFiBand ----------------------------------------
+    def GetWiFiBand(self, adapter=None):
+        try:
+            if not self.IsOSLinux():
+                return ""
+
+            if adapter is None or len(adapter) == 0:
+                if self.PreferredNetworkAdapter == None or len(self.PreferredNetworkAdapter) == 0:
+                    adapter = self.GetActiveNetworkAdapter()
+                else:
+                    adapter = self.PreferredNetworkAdapter
+
+            if not adapter or not adapter.startswith("wl"):
+                return ""
+
+            freq_mhz = None
+
+            # Try 'iw <adapter> link' first
+            try:
+                result = subprocess.check_output(["iw", adapter, "link"])
+                if sys.version_info[0] >= 3:
+                    result = result.decode("utf-8")
+                match = re.search(r"freq:\s*(\d+)", result)
+                if match:
+                    freq_mhz = int(match.group(1))
+            except Exception:
+                pass
+
+            # Fallback to 'iwconfig <adapter>'
+            if freq_mhz is None:
+                try:
+                    result = subprocess.check_output(["iwconfig", adapter])
+                    if sys.version_info[0] >= 3:
+                        result = result.decode("utf-8")
+                    match = re.search(r"Frequency:([\d\.]+)\s*(GHz|MHz)", result, re.IGNORECASE)
+                    if match:
+                        val = float(match.group(1))
+                        unit = match.group(2).upper()
+                        if unit == "GHZ":
+                            freq_mhz = int(val * 1000)
+                        else:
+                            freq_mhz = int(val)
+                except Exception:
+                    pass
+
+            if freq_mhz is not None:
+                if 2400 <= freq_mhz <= 2500:
+                    return "2.4 GHz"
+                elif 4900 <= freq_mhz <= 5900:
+                    return "5 GHz"
+                elif 5925 <= freq_mhz <= 7125:
+                    return "6 GHz"
+                elif freq_mhz < 3000:
+                    return "2.4 GHz"
+                elif freq_mhz < 5925:
+                    return "5 GHz"
+                else:
+                    return "6 GHz"
+
+            return ""
+        except Exception as e1:
+            self.LogErrorLine("Error in GetWiFiBand: " + str(e1))
+            return ""
 
     # ------------ MyPlatform::InternetConnected --------------------------------
     # Note: this function, if the network connection is not present could

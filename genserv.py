@@ -14,6 +14,7 @@ import collections
 import errno
 import hashlib
 import json
+import mimetypes
 import os
 import os.path
 import secrets
@@ -23,6 +24,10 @@ import sys
 import threading
 import time
 import uuid
+
+mimetypes.add_type("text/css", ".css")
+mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("image/svg+xml", ".svg")
 
 try:
     from flask import (
@@ -84,7 +89,16 @@ import datetime
 import re
 
 # -------------------------------------------------------------------------------
-app = Flask(__name__, static_url_path="")
+app = Flask(__name__, static_url_path="/static")
+
+# Enable gzip compression when flask-compress is available; big bandwidth win
+# for slow/remote clients. Silently skipped if the package is not installed.
+try:
+    from flask_compress import Compress
+
+    Compress(app)
+except Exception:
+    pass
 
 # this allows the flask support to be extended on a per site basis but sill allow for
 # updates via the main github repository. If genservex.py exists, load it
@@ -93,7 +107,21 @@ if os.path.isfile(
 ):
     import genservext
 
-app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 300
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+
+
+@app.context_processor
+def inject_css():
+    """Inject inline CSS to eliminate parallel SSL socket preloader collisions."""
+    try:
+        css_path = os.path.join(app.root_path, "static", "css", "genmon.css")
+        if os.path.isfile(css_path):
+            with open(css_path, "r", encoding="utf-8") as f:
+                return {"inline_css": f.read()}
+    except Exception as e:
+        LogError("Error reading inline css: " + str(e))
+    return {"inline_css": ""}
 
 HTTPAuthUser = None
 HTTPAuthPass = None
@@ -116,6 +144,8 @@ bMfaTrustExtend = False
 LastOTPSendTime = None
 bUseSecureHTTP = False
 CertMode = "selfsigned"  # selfsigned | localca | custom
+# When True, allow the web UI to be embedded in an iframe from any site
+bAllowIframe = False
 SSLContext = None
 HTTPPort = 8000
 OldHTTPPort = None
@@ -127,6 +157,7 @@ debug = False
 AppPath = ""
 favicon = "favicon.ico"
 ConfigFilePath = ProgramDefaults.ConfPath
+GENWEBPUSH_CONFIG = os.path.join(ConfigFilePath, "genwebpush.conf")
 
 MAIL_SECTION = "MyMail"
 GENMON_SECTION = "GenMon"
@@ -166,21 +197,16 @@ def StartHTTPRedirectServer():
                 location = "https://" + host + self.path
             else:
                 location = "https://" + host + ":" + str(target_port) + self.path
-            # Serve an HTML page with JS redirect instead of a raw 302.
-            # Chrome aggressively caches 301/302 redirects for IP addresses,
-            # making it impossible to reach the HTTP site after HTTPS is disabled.
-            # An HTML page is not cached as a redirect by the browser.
-            self.send_response(200)
+            # Use HTTP 307 Temporary Redirect so browsers follow the redirect for sub-resources
+            # (CSS, JS, images) without caching permanent IP redirects or failing with ERR_TOO_MANY_RETRIES.
+            self.send_response(307)
+            self.send_header("Location", location)
             self.send_header("Content-Type", "text/html")
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.end_headers()
             page = (
-                "<!DOCTYPE html><html><head>"
-                '<meta http-equiv="refresh" content="1;url={loc}">'
-                "</head><body>"
-                '<p>Redirecting to <a href="{loc}">{loc}</a>&hellip;</p>'
-                "<script>location.replace('{loc}');</script>"
-                "</body></html>"
+                "<!DOCTYPE html><html><head><title>Redirecting</title>"
+                '</head><body><p>Redirecting to <a href="{loc}">{loc}</a>&hellip;</p></body></html>'
             ).format(loc=location)
             self.wfile.write(page.encode("utf-8"))
 
@@ -269,40 +295,109 @@ def csrf_check():
 @app.route("/logout")
 def logout():
     try:
-        # remove the session data
-        if LoginActive():
-            session["logged_in"] = False
-            session["write_access"] = False
-            session["mfa_ok"] = False
+        # Clear all Flask session data (Flask automatically sends a secure delete_cookie header)
+        session.clear()
         return redirect(url_for("root"))
     except Exception as e1:
         LogError("Error on logout: " + str(e1))
 
 
 # -------------------------------------------------------------------------------
+@app.route("/logout_all")
+def logout_all():
+    try:
+        if not HasWriteAccess():
+            return jsonify(status="error", message="Admin rights required to logout all devices"), 403
+        
+        # Rotate the Flask Secret Key to instantly cryptographically invalidate 
+        # all existing session cookies across all devices.
+        new_key = secrets.token_hex(24)
+        ConfigFiles[GENMON_CONFIG].WriteValue("secret_key", new_key)
+        app.secret_key = bytes.fromhex(new_key)
+        
+        # Clear current session and redirect to login
+        session.clear()
+        LogError("User initiated Logout All Devices - Secret Key rotated")
+        return redirect(url_for("root"))
+    except Exception as e1:
+        LogError("Error on logout_all: " + str(e1))
+
+
+# -------------------------------------------------------------------------------
+# Extensions treated as long-lived static assets that browsers may cache.
+STATIC_ASSET_EXTENSIONS = (
+    "css", "js", "png", "jpg", "jpeg", "gif", "svg", "ico",
+    "woff", "woff2", "ttf", "webmanifest",
+)
+
+
+def _is_static_asset_request(path):
+    # sw.js must always revalidate so service-worker updates propagate quickly.
+    if path == "/sw.js":
+        return False
+    ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    return ext in STATIC_ASSET_EXTENSIONS
+
+
+@app.context_processor
+def inject_asset_helpers():
+    # asset_ver() returns the file mtime so templates can append ?v=<mtime>,
+    # busting the browser cache automatically whenever an asset is updated.
+    def asset_ver(rel_path):
+        try:
+            full = os.path.join(app.static_folder, rel_path.lstrip("/"))
+            return str(int(os.path.getmtime(full)))
+        except Exception:
+            return "1"
+
+    return dict(asset_ver=asset_ver)
+
+
+# -------------------------------------------------------------------------------
 @app.after_request
 def add_header(r):
     """
-    Force cache header and add security headers
+    Set cache headers (long-lived for versioned static assets, no-store for
+    everything else) and add security headers.
+    Ensure static assets receive explicit Content-Type headers so X-Content-Type-Options: nosniff
+    never rejects stylesheets or scripts.
     """
-    r.headers[
-        "Cache-Control"
-    ] = "no-cache, no-store, must-revalidate, public, max-age=0"
-    r.headers["Pragma"] = "no-cache"
-    r.headers["Expires"] = "0"
+    if _is_static_asset_request(request.path):
+        if request.path.endswith(".css") or "/css/" in request.path or "/static/css/" in request.path:
+            r.headers["Content-Type"] = "text/css; charset=utf-8"
+        elif request.path.endswith(".js") or "/js/" in request.path or "/static/js/" in request.path:
+            r.headers["Content-Type"] = "application/javascript; charset=utf-8"
+        r.headers["Access-Control-Allow-Origin"] = "*"
+        if request.args.get("v"):
+            r.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            r.headers["Cache-Control"] = "public, max-age=3600"
+    else:
+        r.headers[
+            "Cache-Control"
+        ] = "no-cache, no-store, must-revalidate, public, max-age=0"
+        r.headers["Pragma"] = "no-cache"
+        r.headers["Expires"] = "0"
 
     # --- security headers ---
     r.headers["X-Content-Type-Options"] = "nosniff"
-    r.headers["X-Frame-Options"] = "DENY"
     r.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     r.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    # Framing is blocked by default. When embedding is allowed, drop
+    # X-Frame-Options (its ALLOW-FROM is deprecated) and open CSP
+    # frame-ancestors so the page can load inside an iframe.
+    if bAllowIframe:
+        frame_ancestors = "*"
+    else:
+        frame_ancestors = "'none'"
+        r.headers["X-Frame-Options"] = "DENY"
     r.headers["Content-Security-Policy"] = (
-        "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-        "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; "
-        "connect-src 'self' https://raw.githubusercontent.com; "
-        "frame-ancestors 'none'"
+        "default-src 'self' https: http: data: blob:; "
+        "script-src 'self' https: http: 'unsafe-inline' 'unsafe-eval'; "
+        "style-src 'self' https: http: 'unsafe-inline'; "
+        "img-src 'self' https: http: data: blob:; "
+        "connect-src 'self' https: http: https://raw.githubusercontent.com; "
+        "frame-ancestors " + frame_ancestors
     )
 
     # When HTTPS is off, tell browsers to stop forcing HTTPS (clears cached HSTS)
@@ -310,6 +405,52 @@ def add_header(r):
         r.headers["Strict-Transport-Security"] = "max-age=0"
 
     return r
+
+
+# -------------------------------------------------------------------------------
+@app.route("/genmon.css")
+@app.route("/css/<path:filename>")
+@app.route("/static/css/<path:filename>")
+def serve_css(filename="genmon.css"):
+    return send_from_directory(os.path.join(app.root_path, "static", "css"), filename, mimetype="text/css")
+
+
+@app.route("/genmon.js")
+@app.route("/js/<path:filename>")
+@app.route("/static/js/<path:filename>")
+def serve_js(filename="genmon.js"):
+    return send_from_directory(os.path.join(app.root_path, "static", "js"), filename, mimetype="application/javascript")
+
+
+@app.route("/icons/<path:filename>")
+@app.route("/static/icons/<path:filename>")
+def serve_icons(filename):
+    return send_from_directory(os.path.join(app.root_path, "static", "icons"), filename)
+
+
+@app.route("/svg/<path:filename>")
+@app.route("/static/svg/<path:filename>")
+def serve_svg(filename):
+    return send_from_directory(os.path.join(app.root_path, "static", "svg"), filename)
+
+
+@app.route("/sw.js")
+@app.route("/static/sw.js")
+def serve_sw():
+    static_dir = os.path.join(app.root_path, "static")
+    response = send_from_directory(static_dir, "sw.js", mimetype="application/javascript")
+    response.headers["Service-Worker-Allowed"] = "/"
+    response.headers["Content-Type"] = "application/javascript; charset=utf-8"
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
+
+
+@app.route("/manifest.webmanifest")
+@app.route("/static/manifest.webmanifest")
+def serve_manifest():
+    response = send_from_directory(app.static_folder, "manifest.webmanifest", mimetype="application/manifest+json")
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
 
 
 # -------------------------------------------------------------------------------
@@ -823,6 +964,13 @@ def get_script_logs_json():
                     "has_error": has_err,
                     "has_warning": has_warn,
                 }
+        except FileNotFoundError:
+            return {
+                "path": filepath,
+                "lines": ["Log file has not been created yet. Monitoring active and connection is healthy."],
+                "has_error": False,
+                "has_warning": False,
+            }
         except Exception as e:
             return {
                 "path": filepath,
@@ -871,10 +1019,41 @@ def get_script_logs_json():
     if not sd_log:
         sd_log = read_log_file("/home/genmonpi/sdcard_backup.log")
 
+    watchdog_paths = [
+        "/var/log/net-watchdog.log",
+        "/home/genmonpi/genmon/net-watchdog.log",
+        "/home/genmonpi/net-watchdog.log",
+        "/etc/genmon/net-watchdog.log",
+        "./net-watchdog.log",
+    ]
+    watchdog_log = None
+    for p in watchdog_paths:
+        if os.path.exists(p):
+            watchdog_log = read_log_file(p)
+            break
+    if not watchdog_log:
+        watchdog_log = read_log_file("/var/log/net-watchdog.log")
+
+    webpush_paths = [
+        "/var/log/genwebpush.log",
+        "/etc/genmon/genwebpush.log",
+        "/home/genmonpi/genmon/genwebpush.log",
+        "./genwebpush.log",
+    ]
+    webpush_log = None
+    for p in webpush_paths:
+        if os.path.exists(p):
+            webpush_log = read_log_file(p)
+            break
+    if not webpush_log:
+        webpush_log = read_log_file("/var/log/genwebpush.log")
+
     return {
         "sync_log": sync_log,
         "backup_log": backup_log,
         "sdcard_backup_log": sd_log,
+        "net_watchdog_log": watchdog_log,
+        "genwebpush_log": webpush_log,
     }
 
 
@@ -899,6 +1078,19 @@ def clear_script_log_json(log_type):
             "/home/genmonpi/sdcard_backup.log",
             "/etc/genmon/sdcard_backup.log",
             "./sdcard_backup.log",
+        ],
+        "watchdog": [
+            "/var/log/net-watchdog.log",
+            "/home/genmonpi/genmon/net-watchdog.log",
+            "/home/genmonpi/net-watchdog.log",
+            "/etc/genmon/net-watchdog.log",
+            "./net-watchdog.log",
+        ],
+        "webpush": [
+            "/var/log/genwebpush.log",
+            "/etc/genmon/genwebpush.log",
+            "/home/genmonpi/genmon/genwebpush.log",
+            "./genwebpush.log",
         ],
     }
 
@@ -1390,6 +1582,7 @@ def SendTestEmail(query_string):
         use_ssl = parameters["use_ssl"] in (True, "true", "True", "1", 1)
         tls_disable = parameters["tls_disable"] in (True, "true", "True", "1", 1)
         smtpauth_disable = parameters["smtpauth_disable"] in (True, "true", "True", "1", 1)
+        use_html = parameters.get("use_html", False) in (True, "true", "True", "1", 1)
 
     except Exception as e1:
         LogErrorLine("Error parsing parameters in SendTestEmail: " + str(e1))
@@ -1408,6 +1601,7 @@ def SendTestEmail(query_string):
             use_ssl=use_ssl,
             tls_disable=tls_disable,
             smtpauth_disable=smtpauth_disable,
+            use_html=use_html,
         )
         return jsonify({"message": ReturnMessage})
     except Exception as e1:
@@ -1924,6 +2118,21 @@ def GetAddOns():
             "url"
         ] = "https://github.com/jgyates/genmon/wiki/1----Software-Overview#gensyslogpy-optional"
         AddOnCfg["gensyslog"]["parameters"] = None
+
+        # GENWEBPUSH
+        try:
+            webpush_enabled = ConfigFiles[GENLOADER_CONFIG].ReadValue(
+                "enable", return_type=bool, section="genwebpush", default=True
+            ) if (GENLOADER_CONFIG in ConfigFiles and ConfigFiles[GENLOADER_CONFIG]) else True
+        except Exception:
+            webpush_enabled = True
+
+        AddOnCfg["genwebpush"] = collections.OrderedDict()
+        AddOnCfg["genwebpush"]["enable"] = webpush_enabled
+        AddOnCfg["genwebpush"]["title"] = "Web Push Notifications (PWA)"
+        AddOnCfg["genwebpush"]["description"] = "VAPID-signed push alerts for mobile PWA devices & web browsers"
+        AddOnCfg["genwebpush"]["icon"] = "notifications"
+        AddOnCfg["genwebpush"]["parameters"] = None
 
         # GENMQTT
         AddOnCfg["genmqtt"] = collections.OrderedDict()
@@ -3409,7 +3618,7 @@ def GetAddOns():
         )
         AddOnCfg["genotodata"]["title"] = "Otodata TM6030 Propane Tank Sensor"
         AddOnCfg["genotodata"]["description"] = Description
-        AddOnCfg["genotodata"]["icon"] = "Genmon"
+        AddOnCfg["genotodata"]["icon"] = "otodata"
         AddOnCfg["genotodata"]["url"] = (
             "https://github.com/jgyates/genmon/wiki/"
             "1----Software-Overview#genotodatapy-optional"
@@ -3936,18 +4145,18 @@ def ReadAdvancedSettingsFromFile():
             GENMON_SECTION,
             "additional_modbus_timeout",
         ]
-        if ControllerType == "custom":
-            ConfigSettings["modbus_between_frame_delay"] = [
-                "float",
-                "Modbus Betweeen Frame Delay (sec)",
-                8,
-                "0.0",
-                "",
-                "number",
-                GENMON_CONFIG,
-                GENMON_SECTION,
-                "modbus_between_frame_delay",
-            ]
+
+        ConfigSettings["modbus_between_frame_delay"] = [
+            "float",
+            "Modbus Between Frame Delay (sec)",
+            8,
+            "0.0",
+            "",
+            "number",
+            GENMON_CONFIG,
+            GENMON_SECTION,
+            "modbus_between_frame_delay",
+        ]
         # Depricated, no longer needed
         #ConfigSettings["use_modbus_fc4"] = [
         #    "boolean",
@@ -5086,6 +5295,17 @@ def ReadSettingsFromFile():
         GENMON_SECTION,
         "http_port",
     ]
+    ConfigSettings["allow_iframe"] = [
+        "boolean",
+        "Allow Embedding in an iframe",
+        216,
+        False,
+        "",
+        "",
+        GENMON_CONFIG,
+        GENMON_SECTION,
+        "allow_iframe",
+    ]
     ConfigSettings["favicon"] = [
         "string",
         "FavIcon",
@@ -5318,6 +5538,17 @@ def ReadSettingsFromFile():
         MAIL_CONFIG,
         MAIL_SECTION,
         "tls_disable",
+    ]
+    ConfigSettings["use_html"] = [
+        "boolean",
+        "Use HTML Email Format",
+        310,
+        False,
+        "",
+        "",
+        MAIL_CONFIG,
+        MAIL_SECTION,
+        "use_html",
     ]
     ConfigSettings["smtpauth_disable"] = [
         "boolean",
@@ -6327,6 +6558,7 @@ def LoadConfig():
     global bMfaEnrolled
     global SecretMFAKey
     global bUseSecureHTTP
+    global bAllowIframe
     global LdapServer
     global LdapBase
     global DomainNetbios
@@ -6407,6 +6639,12 @@ def LoadConfig():
             # dont use MFA unless HTTPS is enabled
             bUseMFA = False
 
+        # Allow iframe embedding from any origin. Default False keeps framing
+        # blocked (X-Frame-Options DENY + CSP frame-ancestors 'none').
+        bAllowIframe = ConfigFiles[GENMON_CONFIG].ReadValue(
+            "allow_iframe", return_type=bool, default=False
+        )
+
         ListenIPAddress = ConfigFiles[GENMON_CONFIG].ReadValue("flask_listen_ip_address", default="0.0.0.0")
         
         if ConfigFiles[GENMON_CONFIG].HasOption("http_port"):
@@ -6424,86 +6662,85 @@ def LoadConfig():
             "login_lockout_seconds", return_type=int, default=(5 * 60)
         )
 
-        # user name and password require usehttps = True
-        if bUseSecureHTTP:
-            if ConfigFiles[GENMON_CONFIG].HasOption("ldap_server"):
-                LdapServer = ConfigFiles[GENMON_CONFIG].ReadValue(
-                    "ldap_server", default=""
-                )
-                LdapServer = LdapServer.strip()
-                if LdapServer == "":
-                    LdapServer = None
-                else:
-                    if ConfigFiles[GENMON_CONFIG].HasOption("ldap_base"):
-                        LdapBase = ConfigFiles[GENMON_CONFIG].ReadValue(
-                            "ldap_base", default=""
-                        )
-                    if ConfigFiles[GENMON_CONFIG].HasOption("domain_netbios"):
-                        DomainNetbios = ConfigFiles[GENMON_CONFIG].ReadValue(
-                            "domain_netbios", default=""
-                        )
-                    if ConfigFiles[GENMON_CONFIG].HasOption("ldap_admingroup"):
-                        LdapAdminGroup = ConfigFiles[GENMON_CONFIG].ReadValue(
-                            "ldap_admingroup", default=""
-                        )
-                    if ConfigFiles[GENMON_CONFIG].HasOption("ldap_readonlygroup"):
-                        LdapReadOnlyGroup = ConfigFiles[GENMON_CONFIG].ReadValue(
-                            "ldap_readonlygroup", default=""
-                        )
-                    if LdapBase == "":
-                        LdapBase = None
-                    if DomainNetbios == "":
-                        DomainNetbios = None
-                    if LdapAdminGroup == "":
-                        LdapAdminGroup = None
-                    if LdapReadOnlyGroup == "":
-                        LdapReadOnlyGroup = None
-                    if (
-                        LdapReadOnlyGroup == None
-                        and LdapAdminGroup == None
-                        or LdapBase == None
-                        or DomainNetbios == None
-                    ):
-                        LdapServer = None
-
-            if ConfigFiles[GENMON_CONFIG].HasOption("http_user"):
-                HTTPAuthUser = ConfigFiles[GENMON_CONFIG].ReadValue(
-                    "http_user", default=""
-                )
-                HTTPAuthUser = HTTPAuthUser.strip()
-                # No user name or pass specified, disable
-                if HTTPAuthUser == "":
-                    HTTPAuthUser = None
-                    HTTPAuthPass = None
-                elif ConfigFiles[GENMON_CONFIG].HasOption("http_pass"):
-                    HTTPAuthPass = ConfigFiles[GENMON_CONFIG].ReadValue(
-                        "http_pass", default=""
-                    )
-                    HTTPAuthPass = HTTPAuthPass.strip()
-                if HTTPAuthUser != None and HTTPAuthPass != None:
-                    if ConfigFiles[GENMON_CONFIG].HasOption("http_user_ro"):
-                        HTTPAuthUser_RO = ConfigFiles[GENMON_CONFIG].ReadValue(
-                            "http_user_ro", default=""
-                        )
-                        HTTPAuthUser_RO = HTTPAuthUser_RO.strip()
-                        if HTTPAuthUser_RO == "":
-                            HTTPAuthUser_RO = None
-                            HTTPAuthPass_RO = None
-                        elif ConfigFiles[GENMON_CONFIG].HasOption("http_pass_ro"):
-                            HTTPAuthPass_RO = ConfigFiles[GENMON_CONFIG].ReadValue(
-                                "http_pass_ro", default=""
-                            )
-                            HTTPAuthPass_RO = HTTPAuthPass_RO.strip()
-
-            HTTPSPort = ConfigFiles[GENMON_CONFIG].ReadValue(
-                "https_port", return_type=int, default=443
+        # Load LDAP and Password Authentication settings
+        if ConfigFiles[GENMON_CONFIG].HasOption("ldap_server"):
+            LdapServer = ConfigFiles[GENMON_CONFIG].ReadValue(
+                "ldap_server", default=""
             )
+            LdapServer = LdapServer.strip()
+            if LdapServer == "":
+                LdapServer = None
+            else:
+                if ConfigFiles[GENMON_CONFIG].HasOption("ldap_base"):
+                    LdapBase = ConfigFiles[GENMON_CONFIG].ReadValue(
+                        "ldap_base", default=""
+                    )
+                if ConfigFiles[GENMON_CONFIG].HasOption("domain_netbios"):
+                    DomainNetbios = ConfigFiles[GENMON_CONFIG].ReadValue(
+                        "domain_netbios", default=""
+                    )
+                if ConfigFiles[GENMON_CONFIG].HasOption("ldap_admingroup"):
+                    LdapAdminGroup = ConfigFiles[GENMON_CONFIG].ReadValue(
+                        "ldap_admingroup", default=""
+                    )
+                if ConfigFiles[GENMON_CONFIG].HasOption("ldap_readonlygroup"):
+                    LdapReadOnlyGroup = ConfigFiles[GENMON_CONFIG].ReadValue(
+                        "ldap_readonlygroup", default=""
+                    )
+                if LdapBase == "":
+                    LdapBase = None
+                if DomainNetbios == "":
+                    DomainNetbios = None
+                if LdapAdminGroup == "":
+                    LdapAdminGroup = None
+                if LdapReadOnlyGroup == "":
+                    LdapReadOnlyGroup = None
+                if (
+                    LdapReadOnlyGroup == None
+                    and LdapAdminGroup == None
+                    or LdapBase == None
+                    or DomainNetbios == None
+                ):
+                    LdapServer = None
+
+        if ConfigFiles[GENMON_CONFIG].HasOption("http_user"):
+            HTTPAuthUser = ConfigFiles[GENMON_CONFIG].ReadValue(
+                "http_user", default=""
+            )
+            HTTPAuthUser = HTTPAuthUser.strip()
+            # No user name or pass specified, disable
+            if HTTPAuthUser == "":
+                HTTPAuthUser = None
+                HTTPAuthPass = None
+            elif ConfigFiles[GENMON_CONFIG].HasOption("http_pass"):
+                HTTPAuthPass = ConfigFiles[GENMON_CONFIG].ReadValue(
+                    "http_pass", default=""
+                )
+                HTTPAuthPass = HTTPAuthPass.strip()
+            if HTTPAuthUser != None and HTTPAuthPass != None:
+                if ConfigFiles[GENMON_CONFIG].HasOption("http_user_ro"):
+                    HTTPAuthUser_RO = ConfigFiles[GENMON_CONFIG].ReadValue(
+                        "http_user_ro", default=""
+                    )
+                    HTTPAuthUser_RO = HTTPAuthUser_RO.strip()
+                    if HTTPAuthUser_RO == "":
+                        HTTPAuthUser_RO = None
+                        HTTPAuthPass_RO = None
+                    elif ConfigFiles[GENMON_CONFIG].HasOption("http_pass_ro"):
+                        HTTPAuthPass_RO = ConfigFiles[GENMON_CONFIG].ReadValue(
+                            "http_pass_ro", default=""
+                        )
+                        HTTPAuthPass_RO = HTTPAuthPass_RO.strip()
+
+        HTTPSPort = ConfigFiles[GENMON_CONFIG].ReadValue(
+            "https_port", return_type=int, default=443
+        )
 
         # --- persistent secret key (survives restarts) ---
-        # Rotate the key when the auth mode changes (e.g. HTTP→HTTPS)
+        # Rotate the key when the auth mode changes (e.g. open <-> authenticated)
         # so stale session cookies from a previous mode are invalidated.
         stored_key = ConfigFiles[GENMON_CONFIG].ReadValue("secret_key", default="")
-        current_auth_mode = "auth" if (bUseSecureHTTP and LoginActive()) else "open"
+        current_auth_mode = "auth" if LoginActive() else "open"
         stored_auth_mode = ConfigFiles[GENMON_CONFIG].ReadValue("secret_key_auth_mode", default="")
         if not stored_key or stored_auth_mode != current_auth_mode:
             stored_key = secrets.token_hex(24)
@@ -7088,6 +7325,133 @@ def passkey_login_complete():
         return jsonify(error="Passkey verification failed"), 500
 
 
+# ---------------------WebPush API Endpoints--------------------------------------
+@app.route("/api/webpush/vapid_key", methods=["GET"])
+def webpush_vapid_key():
+    try:
+        from addon.genwebpush import EnsureVapidKeys
+        pub, _ = EnsureVapidKeys()
+        resp = jsonify(status="ok", public_key=pub)
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        return resp
+    except Exception as e1:
+        LogErrorLine("Error getting VAPID public key: " + str(e1))
+        return jsonify(status="error", message=str(e1)), 500
+
+
+@app.route("/api/webpush/subscribe", methods=["POST"])
+def webpush_subscribe():
+    try:
+        if not HasWriteAccess():
+            return jsonify(status="error", message="Unauthorized: Write access required"), 403
+        sub_data = request.get_json(force=True, silent=True) or {}
+        if not sub_data or "endpoint" not in sub_data:
+            return jsonify(status="error", message="Invalid subscription payload"), 400
+        from addon.genwebpush import AddSubscription
+        AddSubscription(sub_data)
+        return jsonify(status="ok")
+    except Exception as e1:
+        LogErrorLine("Error saving webpush subscription: " + str(e1))
+        return jsonify(status="error", message=str(e1)), 500
+
+
+@app.route("/api/webpush/unsubscribe", methods=["POST"])
+def webpush_unsubscribe():
+    try:
+        if not HasWriteAccess():
+            return jsonify(status="error", message="Unauthorized: Write access required"), 403
+        data = request.get_json(force=True, silent=True) or {}
+        endpoint = data.get("endpoint")
+        if endpoint:
+            from addon.genwebpush import RemoveSubscription
+            RemoveSubscription(endpoint)
+        return jsonify(status="ok")
+    except Exception as e1:
+        LogErrorLine("Error removing webpush subscription: " + str(e1))
+        return jsonify(status="error", message=str(e1)), 500
+
+
+@app.route("/api/webpush/update_name", methods=["POST"])
+def webpush_update_name():
+    try:
+        if not HasWriteAccess():
+            return jsonify(status="error", message="Unauthorized: Write access required"), 403
+        data = request.get_json(force=True, silent=True) or {}
+        endpoint = data.get("endpoint")
+        new_name = data.get("device_name")
+        if endpoint and new_name:
+            from addon.genwebpush import UpdateSubscriptionName
+            UpdateSubscriptionName(endpoint, new_name)
+        return jsonify(status="ok")
+    except Exception as e1:
+        LogErrorLine("Error updating webpush device name: " + str(e1))
+        return jsonify(status="error", message=str(e1)), 500
+
+
+@app.route("/api/webpush/subscriptions", methods=["GET"])
+def webpush_subscriptions():
+    try:
+        from addon.genwebpush import GetSubscriptionsList
+        subs = GetSubscriptionsList()
+        return jsonify(status="ok", subscriptions=subs, count=len(subs))
+    except Exception as e1:
+        LogErrorLine("Error getting webpush subscriptions list: " + str(e1))
+        return jsonify(status="error", message=str(e1)), 500
+
+
+@app.route("/api/webpush/preferences", methods=["GET", "POST"])
+def webpush_preferences():
+    try:
+        cfg_file = GENWEBPUSH_CONFIG if ("GENWEBPUSH_CONFIG" in globals() and GENWEBPUSH_CONFIG) else os.path.join(ConfigFilePath, "genwebpush.conf")
+        config_obj = ConfigFiles.get(cfg_file)
+        if not config_obj:
+            config_obj = MyConfig(filename=cfg_file, section="genwebpush", log=log)
+            ConfigFiles[cfg_file] = config_obj
+
+        if request.method == "POST":
+            if not HasWriteAccess():
+                return jsonify(status="error", message="Unauthorized: Write access required"), 403
+            data = request.get_json(force=True, silent=True) or {}
+            for key in ["vapid_email", "notify_outage", "notify_exercise", "notify_error", "notify_warning", "notify_off_manual", "notify_fuel", "notify_pi_state", "notify_sw_update", "notify_info"]:
+                if key in data:
+                    if key == "vapid_email":
+                        config_obj.WriteValue("vapid_claims_sub", f"mailto:{data[key].replace('mailto:', '')}")
+                    else:
+                        config_obj.WriteValue(key, str(bool(data[key])))
+            return jsonify(status="ok")
+        else:
+            prefs = {}
+            prefs["vapid_email"] = config_obj.ReadValue("vapid_claims_sub", default="mailto:genmon.push@gmail.com").replace("mailto:", "")
+            for key in ["notify_outage", "notify_exercise", "notify_error", "notify_warning", "notify_off_manual", "notify_fuel", "notify_pi_state", "notify_sw_update", "notify_info"]:
+                prefs[key] = config_obj.ReadValue(key, return_type=bool, default=True)
+            return jsonify(status="ok", preferences=prefs)
+    except Exception as e1:
+        LogErrorLine("Error handling webpush preferences: " + str(e1))
+        return jsonify(status="error", message=str(e1)), 500
+
+
+@app.route("/api/webpush/test", methods=["POST"])
+def webpush_test():
+    try:
+        if not HasWriteAccess():
+            return jsonify(status="error", message="Unauthorized: Write access required"), 403
+        data = request.get_json(force=True, silent=True) or {}
+        endpoint = data.get("endpoint")
+        from addon.genwebpush import SendWebPushPayload
+        ok, err_msg = SendWebPushPayload(
+            "⚡ Genmon Test Push Alert",
+            "This is a test notification from your Genmon PWA!",
+            category="info",
+            target_endpoint=endpoint
+        )
+        if not ok:
+            return jsonify(status="error", message=err_msg or "Push delivery failed"), 400
+        return jsonify(status="ok")
+    except Exception as e1:
+        LogErrorLine("Error sending webpush test: " + str(e1))
+        return jsonify(status="error", message=str(e1)), 500
+
+
 # ---------------------SetupMFA--------------------------------------------------
 def SetupMFA():
 
@@ -7219,11 +7583,13 @@ if __name__ == "__main__":
     GENHOMEASSISTANT_CONFIG = os.path.join(ConfigFilePath, "genhomeassistant.conf")
     GENHALINK_CONFIG = os.path.join(ConfigFilePath, "genhalink.conf")
     GENHUBITAT_CONFIG = os.path.join(ConfigFilePath, "genhubitat.conf")
+    GENWEBPUSH_CONFIG = os.path.join(ConfigFilePath, "genwebpush.conf")
 
     ConfigFileList = [
         GENMON_CONFIG,
         MAIL_CONFIG,
         GENLOADER_CONFIG,
+        GENWEBPUSH_CONFIG,
         GENSMS_CONFIG,
         MYMODEM_CONFIG,
         GENPUSHOVER_CONFIG,
@@ -7252,8 +7618,21 @@ if __name__ == "__main__":
 
     for ConfigFile in ConfigFileList:
         if not os.path.isfile(ConfigFile):
-            LogConsole("Missing config file : " + ConfigFile)
-            sys.exit(1)
+            if ConfigFile == GENWEBPUSH_CONFIG:
+                try:
+                    import shutil
+                    base_dir = os.path.dirname(os.path.realpath(__file__))
+                    src_cfg = os.path.join(base_dir, "conf", "genwebpush.conf")
+                    if os.path.isfile(src_cfg):
+                        shutil.copyfile(src_cfg, ConfigFile)
+                    else:
+                        with open(ConfigFile, "w") as f_new:
+                            f_new.write("[genwebpush]\nnotify_outage = True\nnotify_exercise = True\nnotify_error = True\nnotify_warning = True\nnotify_off_manual = True\nnotify_fuel = True\nnotify_pi_state = True\nnotify_sw_update = True\nnotify_info = True\n")
+                except Exception as ex_create:
+                    LogError("Error auto-creating genwebpush.conf: " + str(ex_create))
+            if not os.path.isfile(ConfigFile) and ConfigFile != GENWEBPUSH_CONFIG:
+                LogConsole("Missing config file : " + ConfigFile)
+                sys.exit(1)
 
     ConfigFiles = {}
     for ConfigFile in ConfigFileList:

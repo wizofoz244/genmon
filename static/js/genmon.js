@@ -79,6 +79,71 @@ function statusKey(bs) {
 }
 
 /* ============================================================
+   WiFi signal strength conversion + dial configuration
+   ============================================================
+   There is NO universal standard for turning a WiFi RSSI (dBm) into a
+   "signal quality" percentage. Vendors disagree on what 0% and 100% mean,
+   so every dBm<->% mapping is an approximation. We standardise on the linear
+   mapping used by Microsoft's Native WiFi API (the wlanSignalQuality field),
+   because it is the most widely referenced and what Windows itself reports:
+
+       quality% = 2 * (dBm + 100)   (clamped to 0..100)
+       dBm      = quality% / 2 - 100
+
+   i.e.  -50 dBm (or stronger) => 100%,  -100 dBm (or weaker) => 0%,
+   and every 0.5 dBm ~= 1%. Example: -75 dBm reads 50%.
+
+   References:
+     - Microsoft Native WiFi wlanSignalQuality (WLAN_SIGNAL_QUALITY).
+     - https://stackoverflow.com/questions/15797920 (percent<->dBm).
+
+   History / rationale (see github discussion #1504):
+     Earlier genmon builds scaled -30 dBm=100% / -90 dBm=0%. That had no cited
+     source and made mid-range signals look weaker than users expected
+     (a -75 dBm showed 25%). The -50/-100 scale is the de-facto standard, so
+     we adopt it here and document it so the choice can be defended later.
+
+   Note: genmon.py reports whatever the WiFi driver supplies — dBm for the
+   built-in Raspberry Pi adapter, a percentage for many USB adapters. The tile
+   converts between the two so both readouts (and the dial needle) are shown
+   consistently regardless of what the driver reports. */
+var WifiSignal = {
+  DBM_AT_100: -50,   /* dBm at (or above) which quality is 100% */
+  DBM_AT_0: -100,    /* dBm at (or below) which quality is 0% */
+  dbmToPct: function(dbm) {
+    return Math.round(Math.max(0, Math.min(100, 2 * (dbm + 100))));
+  },
+  pctToDbm: function(pct) {
+    return Math.round(pct / 2 - 100);
+  },
+  /* Scientific dial scale (dBm) with red->green colour zones. The scale runs
+     to -30 dBm so strong real-world signals (which sit around -30..-45) still
+     move the needle even though anything >= -50 dBm is already 100%. */
+  DIAL_MIN: -90,
+  DIAL_MAX: -30,
+  DIAL_LABELS: [-90, -70, -50, -30],
+  DIAL_ZONES: [
+    { from: -90, to: -70, color: '#F44336' },  /* poor  */
+    { from: -70, to: -60, color: '#FF9800' },  /* fair  */
+    { from: -60, to: -30, color: '#4CAF50' }   /* good  */
+  ],
+  /* Signal quality zone for a given dBm. Boundaries match DIAL_ZONES so the
+     header status-bar icon and the tile dial always agree on colour. */
+  zoneForDbm: function(dbm) {
+    if (dbm >= -60) return 'good';
+    if (dbm >= -70) return 'fair';
+    return 'poor';
+  },
+  /* Fan-icon fill level (1..4) using the same dBm boundaries as the zones. */
+  barsForDbm: function(dbm) {
+    if (dbm >= -50) return 4;
+    if (dbm >= -60) return 3;
+    if (dbm >= -70) return 2;
+    return 1;
+  }
+};
+
+/* ============================================================
    STORE  (server-backed persistence via genmon.conf ui_prefs)
    ============================================================ */
 var Store = {
@@ -86,19 +151,25 @@ var Store = {
   _syncTimer: null,
   _loaded: false,   /* true only after a successful pull — guards against overwriting server data */
 
-  /* Pull prefs from server (synchronous, called once at init) */
-  _pull: function() {
-    try {
-      var raw = $.ajax({url: CFG.baseUrl + 'get_ui_prefs',
-        dataType:'text', async:false, timeout:4000}).responseText;
+  /* Pull prefs from server (asynchronous) */
+  _pull: function(cb) {
+    var self = this;
+    $.ajax({url: CFG.baseUrl + 'get_ui_prefs',
+      dataType:'text', async:true, timeout:4000
+    }).done(function(raw) {
       if (raw && raw.charAt(0) === '{') {
-        var d = JSON.parse(raw);
-        if (d && typeof d === 'object') {
-          if (Object.keys(d).length) this._c = d;
-          this._loaded = true;   /* server responded with valid JSON (even if empty) */
-        }
+        try {
+          var d = JSON.parse(raw);
+          if (d && typeof d === 'object') {
+            if (Object.keys(d).length) self._c = d;
+            self._loaded = true;   /* server responded with valid JSON */
+          }
+        } catch(e) {}
       }
-    } catch(e) { /* server unavailable — _loaded stays false, writes are blocked */ }
+      if (cb) cb();
+    }).fail(function() {
+      if (cb) cb();
+    });
   },
 
   /* Push prefs to server (debounced 2s, fire-and-forget) */
@@ -274,9 +345,13 @@ var API = {
     return $.ajax({
       url: CFG.baseUrl + cmd, dataType: 'json',
       timeout: timeout || CFG.ajaxTimeout, cache: false
-    }).done(function() {
+    }).done(function(data) {
       API._errs = 0;
       if (!S.connected) { S.connected = true; UI.connBadge(); }
+      if (typeof data === 'string' && (data.indexOf('<form') >= 0 || data.indexOf('<!DOCTYPE') >= 0)) {
+        window.location.href = '/';
+        return;
+      }
     }).fail(function(xhr) {
       API._errs++;
       // Detect auth redirect
@@ -307,12 +382,14 @@ var Modal = {
   show: function(title, body, buttons) {
     var bh = '';
     if (buttons) buttons.forEach(function(b) {
-      bh += '<button class="btn ' + (b.cls||'btn-outline') + '" data-action="' +
+      bh += '<button type="button" class="btn ' + (b.cls||'btn-outline') + '" data-action="' +
             esc(b.action||'close') + '">' + esc(b.text) + '</button>';
     });
     this._$ov.html(
-      '<div class="modal"><div class="modal-header">' + esc(title) +
-      '<button class="modal-close" data-action="close">&times;</button></div>' +
+      '<div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">' +
+      '<div class="modal-header"><span id="modal-title">' + esc(title) + '</span>' +
+      '<button type="button" class="modal-close" data-action="close" aria-label="Close ' +
+      esc(title) + '">&times;</button></div>' +
       '<div class="modal-body">' + (body._trusted ? body._html : esc(body)) + '</div>' +
       (bh ? '<div class="modal-footer">' + bh + '</div>' : '') +
       '</div>'
@@ -622,7 +699,13 @@ var Router = {
     delete S.dirty[S.currentPage];
     S.currentPage = page;
     Nav.setActive(page);
-    window.location.hash = '#' + page;
+    if (window.location.hash !== '#' + page) {
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState(null, '', '#' + page);
+      } else {
+        window.location.hash = '#' + page;
+      }
+    }
     $('#customize-btn').toggle(page === 'status').removeClass('edit-active');
     S.editMode = false;
     Pages.render(page);
@@ -633,8 +716,8 @@ var Router = {
     $c.addClass('page-enter');
     Poll.setPage(page);
   },
-  go: function(page) {
-    if (S.currentPage === page) return;
+  go: function(page, force) {
+    if (!force && S.currentPage === page) return;
     if (S.dirty[S.currentPage]) {
       var prev = S.currentPage;
       Modal.confirm('Unsaved Changes',
@@ -650,8 +733,8 @@ var Router = {
     var h = window.location.hash.replace('#','') || 'status';
     if (h === 'advanced') h = 'settings'; /* advanced merged into settings */
     var valid = NAV_ITEMS.some(function(n){return n.id===h;});
-    Router.go(valid ? h : 'status');
-    $(window).on('hashchange', function() {
+    Router.go(valid ? h : 'status', true);
+    $(window).off('hashchange.router').on('hashchange.router', function() {
       var p = window.location.hash.replace('#','') || 'status';
       if (p !== S.currentPage) Router.go(p);
     });
@@ -704,10 +787,8 @@ var Poll = {
       UI.statusBadge(S.baseStatus);
       $('#monitor-time').text(d.MonitorTime || '');
       UI.updatePill();
-      /* Fetch canonical base status for consistent color mapping */
-      API.get('getbase').done(function(gb) {
-        if (gb) S.getBase = String(gb).replace(/"/g, '').trim().toUpperCase();
-      });
+      /* Canonical base status for consistent color mapping */
+      if (d.basestatus) S.getBase = String(d.basestatus).replace(/"/g, '').trim().toUpperCase();
       /* --- Alert bar: system health + unsent feedback --- */
       if (d.SystemHealth && d.SystemHealth !== 'OK') {
         var hl = /thread|dead|log file/i.test(d.SystemHealth) ? 'error' : 'warn';
@@ -726,6 +807,7 @@ var Poll = {
             var tt = d.tiles[ti], sub = (tt.subtype||'').toLowerCase();
             if (sub === 'wifi' && tt.value) {
               ind.wifi = Math.abs(parseFloat(tt.value)) || 0;
+              if (tt.band) ind.wifiBand = tt.band;
             } else if (sub === 'temperature' && /cpu/i.test(tt.title||'') && tt.value) {
               ind.cpuTemp = parseFloat(tt.value) || 0;
             }
@@ -826,40 +908,74 @@ var UI = {
     }
   },
 
-  /** Recursively render nested JSON as collapsible KV sections */
+  /** One accessible key/value row (definition term + description). */
+  kvRow: function(key, val, valCls) {
+    return '<div class="kv-row">' +
+      '<dt class="kv-key">' + esc(key) + '</dt>' +
+      '<dd class="kv-val' + (valCls || '') + '">' +
+      esc(val != null && val !== '' ? val : '--') + '</dd></div>';
+  },
+  /** Wrap kv rows in a single definition list so AT separates labels from values. */
+  kvDl: function(rowsHtml) {
+    return rowsHtml ? '<dl class="status-dl">' + rowsHtml + '</dl>' : '';
+  },
+
+  /** Recursively render nested JSON as collapsible KV sections.
+   *  Uses headings + expandable buttons for sections, <dl> for key/value
+   *  rows, and <ul> for plain lists — so AT can navigate without run-on text. */
   renderJson: function(data, depth) {
-    if (!data || typeof data !== 'object') return '<span>' + esc(String(data)) + '</span>';
+    if (data == null || typeof data !== 'object') return '<span>' + esc(String(data)) + '</span>';
     depth = depth || 0;
+    /* Detailed Status is h2; nested sections start at h3 */
+    var hl = Math.min(3 + depth, 6);
     var h = '';
     if (Array.isArray(data)) {
-      for (var i = 0; i < data.length; i++) {
+      var hasObj = false;
+      for (var ai = 0; ai < data.length; ai++) {
+        if (data[ai] && typeof data[ai] === 'object') { hasObj = true; break; }
+      }
+      if (!hasObj) {
+        h += '<ul class="status-list" role="list">';
+        for (var i = 0; i < data.length; i++) {
+          h += '<li class="kv-row" role="listitem"><span class="kv-val">' +
+            esc(data[i] != null ? data[i] : '') + '</span></li>';
+        }
+        return h + '</ul>';
+      }
+      for (i = 0; i < data.length; i++) {
         var item = data[i];
         if (item && typeof item === 'object') {
           h += UI.renderJson(item, depth);
         } else {
-          h += '<div class="kv-row"><span class="kv-val">' + esc(item!=null?item:'') + '</span></div>';
+          h += '<div class="kv-row"><span class="kv-val">' + esc(item != null ? item : '') + '</span></div>';
         }
       }
       return h;
     }
+    var pending = '';
+    function flushScalars() {
+      if (!pending) return;
+      h += '<dl class="status-dl">' + pending + '</dl>';
+      pending = '';
+    }
     for (var key in data) {
       if (!data.hasOwnProperty(key)) continue;
       var v = data[key];
-      if (v && typeof v === 'object' && !Array.isArray(v)) {
+      if (v && typeof v === 'object') {
+        flushScalars();
         h += '<div class="status-section">' +
-          '<div class="status-section-title open">' + esc(key) + '</div>' +
+          '<h' + hl + ' class="status-section-hdr">' +
+          '<button type="button" class="status-section-title open" aria-expanded="true">' +
+          esc(key) + '</button></h' + hl + '>' +
           '<div class="status-kv">' +
-          UI.renderJson(v, depth+1) + '</div></div>';
-      } else if (Array.isArray(v)) {
-        h += '<div class="status-section">' +
-          '<div class="status-section-title open">' + esc(key) + '</div>' +
-          '<div class="status-kv">' +
-          UI.renderJson(v, depth+1) + '</div></div>';
+          UI.renderJson(v, depth + 1) + '</div></div>';
       } else {
-        h += '<div class="kv-row"><span class="kv-key">' + esc(key) +
-          '</span><span class="kv-val">' + esc(v!=null?v:'') + '</span></div>';
+        pending += '<div class="kv-row">' +
+          '<dt class="kv-key">' + esc(key) + '</dt>' +
+          '<dd class="kv-val">' + esc(v != null ? v : '') + '</dd></div>';
       }
     }
+    flushScalars();
     return h;
   },
 
@@ -1004,7 +1120,10 @@ var UI = {
   /** Bind section-title click toggle globally inside $container */
   bindSectionToggles: function($c) {
     $c.off('click.sect', '.status-section-title').on('click.sect', '.status-section-title', function() {
-      $(this).toggleClass('open').next('.status-kv').slideToggle(200);
+      var $btn = $(this);
+      var open = !$btn.hasClass('open');
+      $btn.toggleClass('open', open).attr('aria-expanded', open ? 'true' : 'false');
+      $btn.closest('.status-section').children('.status-kv').slideToggle(200);
     });
   },
 
@@ -1023,8 +1142,9 @@ var UI = {
     $c.find('.status-section-title').each(function() {
       var key = $(this).text().trim();
       if (key in map) {
-        $(this).toggleClass('open', map[key]);
-        $(this).next('.status-kv').toggle(map[key]);
+        var isOpen = !!map[key];
+        $(this).toggleClass('open', isOpen).attr('aria-expanded', isOpen ? 'true' : 'false');
+        $(this).closest('.status-section').children('.status-kv').toggle(isOpen);
       }
     });
   },
@@ -1044,11 +1164,13 @@ var UI = {
     /* WiFi signal strength (dBm, positive number means -N dBm) */
     if (ind.wifi) {
       var dbm = ind.wifi;  /* e.g. 42 means -42 dBm */
-      var wPct = Math.round(Math.max(0, Math.min(100, (-dbm + 90) / 60 * 100)));
-      var bars = dbm <= 30 ? 4 : dbm <= 50 ? 3 : dbm <= 65 ? 2 : 1;
-      var wc = bars >= 3 ? 'ind-ok' : bars === 2 ? 'ind-warn' : 'ind-bad';
+      var wPct = WifiSignal.dbmToPct(-dbm);
+      var bars = WifiSignal.barsForDbm(-dbm);
+      var zone = WifiSignal.zoneForDbm(-dbm);
+      var wc = zone === 'good' ? 'ind-ok' : zone === 'fair' ? 'ind-warn' : 'ind-bad';
+      var bandTxt = ind.wifiBand ? ' (' + esc(ind.wifiBand) + ')' : '';
       parts.push(
-        '<div class="hdr-ind '+wc+'" title="WiFi: -'+dbm+' dBm ('+wPct+'%)">' +
+        '<div class="hdr-ind '+wc+'" title="WiFi: -'+dbm+' dBm ('+wPct+'%'+bandTxt+')">' +
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
         /* Fan-shaped wifi arcs — dim the ones above the signal level */
         '<path d="M1.42 9a16.02 16.02 0 0121.16 0"' + (bars < 4 ? ' class="ind-dim"' : '') + '/>' +
@@ -1077,7 +1199,7 @@ var UI = {
       }
       var tc = t < warnAt ? 'ind-ok' : t < badAt ? 'ind-warn' : 'ind-bad';
       parts.push(
-        '<div class="hdr-ind '+tc+'" title="CPU: '+t+'\u00B0C">' +
+        '<div class="hdr-ind '+tc+'" title="CPU: '+t+'\u00B0">' +
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
         '<path d="M14 14.76V3.5a2.5 2.5 0 00-5 0v11.26a4.5 4.5 0 105 0z"/>' +
         '<circle cx="11.5" cy="17.5" r="2" fill="currentColor" stroke="none" opacity=".5"/>' +
@@ -1307,7 +1429,7 @@ var Pages = {
         continue;
       }
       if (fixed === 'wifibar') {
-        self._updateWifi(key, tiles[i]);
+        self._updateWifi(key, i, tiles[i]);
         continue;
       }
 
@@ -1369,7 +1491,7 @@ var Pages = {
     TILE_SIZES: ['sm','md','lg'],
     FONT_SIZES: ['sm','md','lg'],
     render: function($c) {
-      var info = S.startInfo, tiles = info.tiles || [];
+      var info = S.startInfo || {}, tiles = info.tiles || [];
       var pg = info.pages || {};
       var infoTiles = Pages.status.INFO_TILES.filter(function(t) {
         if (t.isLogs && pg.logs === false) return false;
@@ -1733,6 +1855,12 @@ var Pages = {
         $btn.addClass('active');
         Store.setGaugeType(key, gtype);
         $tile.attr('data-gtype', gtype);
+        /* WiFi tile: Bars <-> Dial is a pure CSS view swap (the dial gauge is
+           already built into #gw-idx by _initGauge), so just refresh values. */
+        if (gtype === 'wifibar' || gtype === 'wifidial') {
+          if (S._lastGaugeTiles) self._updateGauges(S._lastGaugeTiles);
+          return;
+        }
         /* Enforce size constraints per gauge type */
         if (gtype === 'radial') {
           $tile.removeClass('tile-sm tile-lg').addClass('tile-md').data('size', 'md');
@@ -1753,6 +1881,13 @@ var Pages = {
             if (d && d.tiles) Pages._updateGauges(d.tiles);
           });
         }
+      });
+
+      /* Click script logs tile -> navigate to #scriptlogs */
+      $c.on('click', '[data-tile="scriptlogs"]', function(e) {
+        if (S.editMode) return;
+        if ($(e.target).closest('.tile-hide-btn, .tile-edit-controls, .tile-drag-handle').length) return;
+        Router.go('scriptlogs');
       });
 
       /* Re-add tile from drawer */
@@ -1776,6 +1911,7 @@ var Pages = {
         }
         else if (key === 'clock') $new = $(self._clockTileHtml());
         else if (key === 'weather') $new = $(self._weatherTileHtml());
+        else if (key === 'scriptlogs') $new = $(self._scriptLogsTileHtml());
         else if (km.keyToGauge[key] !== undefined) {
           var rgi = km.keyToGauge[key];
           $new = $(self._tileHtml(key, rgi, tiles[rgi]));
@@ -2033,7 +2169,7 @@ var Pages = {
 
     _scriptLogsTileHtml: function() {
       var savedSize = Store.getTileSize('scriptlogs') || 'md';
-      return '<div class="tile tile-' + esc(savedSize) + '" role="listitem" data-tile="scriptlogs" data-size="' + esc(savedSize) + '" draggable="false" style="cursor:pointer;" onclick="if(!S.editMode) Router.go(\'scriptlogs\');">' +
+      return '<div class="tile tile-' + esc(savedSize) + '" role="listitem" data-tile="scriptlogs" data-size="' + esc(savedSize) + '" draggable="false" style="cursor:pointer;">' +
         '<button type="button" class="tile-hide-btn" title="Hide tile" tabindex="-1" aria-hidden="true">&times;</button>' +
         '<div class="tile-drag-handle" title="Drag to reorder" aria-hidden="true">' + icon('logs') + '</div>' +
         '<div class="tile-edit-controls" style="display:none" aria-hidden="true"><div class="tile-ctrl-row">' +
@@ -2089,9 +2225,11 @@ var Pages = {
         var syncSt = evalStatus('sync', d.sync_log);
         var backupSt = evalStatus('backup', d.backup_log);
         var sdSt = evalStatus('sdcard', d.sdcard_backup_log);
+        var watchSt = evalStatus('watchdog', d.net_watchdog_log);
+        var pushSt = evalStatus('webpush', d.genwebpush_log);
 
-        var overallErr = syncSt.hasErr || backupSt.hasErr || sdSt.hasErr;
-        var overallWarn = syncSt.hasWarn || backupSt.hasWarn || sdSt.hasWarn;
+        var overallErr = syncSt.hasErr || backupSt.hasErr || sdSt.hasErr || watchSt.hasErr || pushSt.hasErr;
+        var overallWarn = syncSt.hasWarn || backupSt.hasWarn || sdSt.hasWarn || watchSt.hasWarn || pushSt.hasWarn;
 
         function formatBadge(st) {
           if (st.hasErr) return '<span style="background:var(--danger,#f05252); color:#fff; padding:2px 7px; border-radius:10px; font-weight:600; font-size:0.72rem;">NEW ERROR</span>';
@@ -2112,6 +2250,8 @@ var Pages = {
         html += '<div style="display:flex; justify-content:space-between; align-items:center;"><span>Sync Log:</span> ' + formatBadge(syncSt) + '</div>';
         html += '<div style="display:flex; justify-content:space-between; align-items:center;"><span>Daily Backup:</span> ' + formatBadge(backupSt) + '</div>';
         html += '<div style="display:flex; justify-content:space-between; align-items:center;"><span>SD Card Backup:</span> ' + formatBadge(sdSt) + '</div>';
+        html += '<div style="display:flex; justify-content:space-between; align-items:center;"><span>Network Watchdog:</span> ' + formatBadge(watchSt) + '</div>';
+        html += '<div style="display:flex; justify-content:space-between; align-items:center;"><span>Web Push Log:</span> ' + formatBadge(pushSt) + '</div>';
         html += '</div>';
 
         $b.html(html);
@@ -2277,16 +2417,32 @@ var Pages = {
         '<div class="thermo-unit" id="thermo-unit-' + idx + '">&deg;C</div></div>';
     },
 
-    /* --- WiFi signal tile — classic WiFi fan icon --- */
+    /* --- WiFi signal tile — bars view (default) or scientific dBm dial --- */
+    /* Returns the stored view preference for the WiFi tile: 'wifidial' or 'wifibar' (default). */
+    _wifiGtype: function(idx) {
+      return Store.getGaugeType(idx) === 'wifidial' ? 'wifidial' : 'wifibar';
+    },
+    /* Bars vs Dial picker shown in the WiFi tile's edit controls */
+    _wifiPickerHtml: function(idx) {
+      var cur = Pages.status._wifiGtype(idx);
+      return '<div class="tile-edit-controls" style="display:none" aria-hidden="true">' +
+        '<div class="tile-ctrl-row gauge-type-picker">' +
+        '<span class="tile-ctrl-label">Style</span>' +
+        '<button type="button" class="gauge-pick-btn wide' + (cur === 'wifibar' ? ' active' : '') + '" data-gtype="wifibar" title="Signal bars" tabindex="-1">Bars</button>' +
+        '<button type="button" class="gauge-pick-btn wide' + (cur === 'wifidial' ? ' active' : '') + '" data-gtype="wifidial" title="Scientific dBm dial" tabindex="-1">Dial</button>' +
+        '</div></div>';
+    },
     _wifiTileHtml: function(idx, t, sub) {
       var isPct = sub === 'wifipercent';
-      return '<div class="tile tile-md tile-wifi" role="listitem" data-tile="' + idx + '" data-size="md" data-gtype="wifibar" ' +
+      var gtype = Pages.status._wifiGtype(idx);
+      return '<div class="tile tile-md tile-wifi" role="listitem" data-tile="' + idx + '" data-size="md" data-gtype="' + gtype + '" ' +
         'data-wifi-pct="' + (isPct ? '1' : '0') + '" draggable="false">' +
         '<button type="button" class="tile-hide-btn" title="Hide tile" tabindex="-1" aria-hidden="true">&times;</button>' +
         '<div class="tile-drag-handle" title="Drag to reorder" aria-hidden="true">' + icon('status') + '</div>' +
-        '<div class="tile-edit-controls" style="display:none" aria-hidden="true"></div>' +
+        Pages.status._wifiPickerHtml(idx) +
         '<h2 class="tile-title">' + esc(t.title) + '</h2>' +
-        '<div class="wifi-wrap" id="gw-' + idx + '" aria-hidden="true">' +
+        /* Bars view */
+        '<div class="wifi-wrap wifi-view-bars" aria-hidden="true">' +
           '<svg class="wifi-svg" viewBox="0 0 24 24" focusable="false" aria-hidden="true">' +
             '<path id="wifi-a3-'+idx+'" class="wifi-arc wifi-arc-dim" d="M1.42 9a16.02 16.02 0 0121.16 0" fill="none" stroke-width="2.2" stroke-linecap="round"/>' +
             '<path id="wifi-a2-'+idx+'" class="wifi-arc wifi-arc-dim" d="M5 12.55a11 11 0 0114 0" fill="none" stroke-width="2.2" stroke-linecap="round"/>' +
@@ -2294,8 +2450,11 @@ var Pages = {
             '<circle id="wifi-dot-'+idx+'" class="wifi-dot wifi-arc-dim" cx="12" cy="20" r="1.4"/>' +
           '</svg>' +
         '</div>' +
+        /* Dial view (radial gauge injected into #gw-idx by _initGauge) */
+        '<div class="tile-gauge wifi-view-dial" id="gw-' + idx + '" aria-hidden="true"></div>' +
         '<div class="wifi-pct" id="wifi-pct-' + idx + '">--%</div>' +
-        '<div class="wifi-dbm" id="wifi-dbm-' + idx + '">-- dBm</div></div>';
+        '<div class="wifi-dbm" id="wifi-dbm-' + idx + '">-- dBm</div>' +
+        '<div class="wifi-band" id="wifi-band-' + idx + '"></div></div>';
     },
 
     _editControlsHtml: function(showFontCtrl, tileKey) {
@@ -2351,6 +2510,17 @@ var Pages = {
       if (!$w.length || !gt) return;
       var self = Pages.status;
       var sub = (gt.subtype||gt.type||'').toLowerCase();
+      /* WiFi tile: always build the dBm dial into #gw-idx (hidden by CSS in
+         bars mode) so switching Bars<->Dial is an instant view swap. */
+      if (self._FIXED_GAUGES[sub] === 'wifibar') {
+        $w.empty();
+        S.gauges[gaugeIdx] = new GenmonGauge($w[0], {
+          min: WifiSignal.DIAL_MIN, max: WifiSignal.DIAL_MAX,
+          labels: WifiSignal.DIAL_LABELS, zones: WifiSignal.DIAL_ZONES,
+          divisions: 6, subdivisions: 2, title: '', units: 'dBm'
+        });
+        return;
+      }
       /* Fixed gauges are rendered by _tileHtml — skip standard init */
       if (self._FIXED_GAUGES[sub]) return;
       var fuel = /fuel/i.test(gt.type||'') || /fuel/i.test(gt.title||'');
@@ -2609,19 +2779,21 @@ var Pages = {
       $('#thermo-unit-'+domIdx).text(unit);
     },
 
-    /* --- WiFi signal update --- */
-    _updateWifi: function(domIdx, t) {
+    /* --- WiFi signal update (drives both the bars view and the dBm dial) --- */
+    _updateWifi: function(domIdx, gaugeIdx, t) {
       var $tile = $('[data-tile="'+domIdx+'"]');
       if (!$tile.length) return;
       var isPct = $tile.attr('data-wifi-pct') === '1';
       var raw = parseFloat(t.value) || 0;
       var dbm, pct;
       if (isPct) {
+        /* Driver reported a percentage — derive an approximate dBm for the dial. */
         pct = Math.round(Math.max(0, Math.min(100, raw)));
-        dbm = Math.round(-30 - (100 - pct) * 0.6);
+        dbm = WifiSignal.pctToDbm(pct);
       } else {
+        /* Driver reported dBm (positive magnitude, e.g. 42 => -42 dBm). */
         dbm = -Math.abs(raw);
-        pct = Math.round(Math.max(0, Math.min(100, (dbm + 90) / 60 * 100)));
+        pct = WifiSignal.dbmToPct(dbm);
       }
       var arcs = pct >= 66 ? 3 : pct >= 33 ? 2 : pct > 0 ? 1 : 0;
       /* Single color: red(0) → yellow(60) → green(120) mapped to 0-100% */
@@ -2638,6 +2810,15 @@ var Pages = {
       if (arcs > 0) { $dot.attr('fill', col); } else { $dot.removeAttr('fill'); }
       $('#wifi-pct-'+domIdx).text(pct + '%');
       $('#wifi-dbm-'+domIdx).text(dbm + ' dBm');
+      var $band = $('#wifi-band-'+domIdx);
+      if (t.band) {
+        $band.text(t.band).show();
+      } else {
+        $band.text('').hide();
+      }
+      /* Dial view: move the needle and show dBm in the LCD */
+      var g = (gaugeIdx != null) ? S.gauges[gaugeIdx] : null;
+      if (g && g.set) { g.set(dbm); if (g.setLabel) g.setLabel(dbm + ''); }
     },
 
     /* --- Weather tile helpers --- */
@@ -2726,10 +2907,20 @@ var Pages = {
       $p.find('.status-section-title').each(function() {
         var key = $(this).text().trim();
         var shouldOpen = (key in saved) ? saved[key] : true;
-        $(this).toggleClass('open', shouldOpen);
-        $(this).next('.status-kv').toggle(shouldOpen);
+        $(this).toggleClass('open', shouldOpen).attr('aria-expanded', shouldOpen ? 'true' : 'false');
+        $(this).closest('.status-section').children('.status-kv').toggle(shouldOpen);
       });
       UI.bindSectionToggles($p);
+    },
+    /* Reference "now" for charts. Log timestamps are written in the monitor
+     * (Pi) wall-clock and parsed as browser-local, so anchor the axis window to
+     * the monitor's current time. Otherwise a browser in a different timezone
+     * than the generator shifts the data off the window. Falls back to the
+     * browser clock until monitor time is known. */
+    _chartNow: function() {
+      var snap = this._interpolate(this._monitorSnap);
+      if (snap && snap.date && !isNaN(snap.date.getTime())) return snap.date;
+      return new Date();
     },
     _initChart: function() {
       var ctx = document.getElementById('pwr-chart');
@@ -2827,7 +3018,7 @@ var Pages = {
     _loadChart: function(mins) {
       var data = S.chartRawData;
       if (!S.chart || !data) return;
-      var now = new Date();
+      var now = this._chartNow();
       var cutoff = new Date(now.getTime() - mins * 60000);
       var points = [];
       for (var i = 0; i < data.length; i++) {
@@ -2896,12 +3087,17 @@ var Pages = {
       var cs = getComputedStyle(document.documentElement);
       var gridC = cs.getPropertyValue('--chart-grid').trim() || 'rgba(148,163,184,.1)';
       var tickC = cs.getPropertyValue('--chart-tick').trim() || '#94a3b8';
+      var isVolt = /volt|v$/i.test(sensorName);
       var chart = new Chart(ctx, {
         type:'line',
         data:{ datasets:[{
-          label:'°', data:[], borderColor:'#f59e0b',
-          backgroundColor:'rgba(245,158,11,.1)', tension:0, fill:true,
-          pointRadius:0, pointBackgroundColor:'#f59e0b', pointBorderColor:'#f59e0b'
+          label: isVolt ? 'V' : '°', data:[],
+          borderColor: isVolt ? '#3b82f6' : '#f59e0b',
+          backgroundColor: isVolt ? 'rgba(59,130,246,.12)' : 'rgba(245,158,11,.1)',
+          tension:0, fill:true,
+          pointRadius:0,
+          pointBackgroundColor: isVolt ? '#3b82f6' : '#f59e0b',
+          pointBorderColor: isVolt ? '#3b82f6' : '#f59e0b'
         }]},
         options:{
           responsive:true, maintainAspectRatio:false,
@@ -2934,17 +3130,38 @@ var Pages = {
                 axis.ticks = ticks;
               }
             }},
-            y:{display:true, grid:{color:gridC}, ticks:{color:tickC}}
+            y:{
+              display:true,
+              grid:{color:gridC},
+              ticks:{
+                color:tickC,
+                callback: function(val) {
+                  return isVolt ? (val.toFixed(2) + ' V') : val;
+                }
+              }
+            }
           },
-          plugins:{legend:{display:false},tooltip:{callbacks:{title:function(items){
-            if(!items.length)return '';
-            var d=new Date(items[0].parsed.x);
-            var mm=String(d.getMonth()+1).padStart(2,'0');
-            var dd=String(d.getDate()).padStart(2,'0');
-            var hh=String(d.getHours()).padStart(2,'0');
-            var mi=String(d.getMinutes()).padStart(2,'0');
-            return mm+'/'+dd+' '+hh+':'+mi;
-          }}}}, animation:{duration:400}
+          plugins:{
+            legend:{display:false},
+            tooltip:{
+              callbacks:{
+                title:function(items){
+                  if(!items.length)return '';
+                  var d=new Date(items[0].parsed.x);
+                  var mm=String(d.getMonth()+1).padStart(2,'0');
+                  var dd=String(d.getDate()).padStart(2,'0');
+                  var hh=String(d.getHours()).padStart(2,'0');
+                  var mi=String(d.getMinutes()).padStart(2,'0');
+                  return mm+'/'+dd+' '+hh+':'+mi;
+                },
+                label:function(item){
+                  var v = item.parsed.y;
+                  return isVolt ? (v.toFixed(4) + ' V') : (v + '°');
+                }
+              }
+            }
+          },
+          animation:{duration:400}
         }
       });
       this._tempCharts[sensorName] = { chart: chart, rawData: null };
@@ -2968,12 +3185,22 @@ var Pages = {
           try {
             var parts = raw.split(' ');
             if (parts.length === 2) {
-              var dp = parts[0].split('/');
+              var isIso = parts[0].indexOf('-') >= 0;
+              var dp = isIso ? parts[0].split('-') : parts[0].split('/');
               var tp = parts[1].split(':');
               if (dp.length === 3 && tp.length >= 2) {
-                var yr = parseInt(dp[2], 10);
-                if (yr < 100) yr += 2000;
-                dt = new Date(yr, parseInt(dp[0], 10) - 1, parseInt(dp[1], 10),
+                var yr, mo, day;
+                if (isIso) {
+                  yr = parseInt(dp[0], 10);
+                  mo = parseInt(dp[1], 10) - 1;
+                  day = parseInt(dp[2], 10);
+                } else {
+                  yr = parseInt(dp[2], 10);
+                  if (yr < 100) yr += 2000;
+                  mo = parseInt(dp[0], 10) - 1;
+                  day = parseInt(dp[1], 10);
+                }
+                dt = new Date(yr, mo, day,
                               parseInt(tp[0], 10), parseInt(tp[1], 10), parseInt(tp[2] || 0, 10));
               }
             }
@@ -2988,7 +3215,7 @@ var Pages = {
       var entry = this._tempCharts[sensorName];
       if (!entry || !entry.chart) return;
       if (!parsed) { this._fetchTempChartData(sensorName, mins); return; }
-      var now = new Date();
+      var now = this._chartNow();
       var cutoff = new Date(now.getTime() - mins * 60000);
       var points = [];
       for (var i = 0; i < parsed.length; i++) {
@@ -3252,22 +3479,24 @@ var Pages = {
       var h = '<div class="page-title">' + icon('maintenance') + ' Maintenance</div>';
 
       /* ── Generator Control ── */
-      if (info.RemoteCommands) {
+      if (info.RemoteCommands || info.RemoteButtons || info.ResetAlarms || info.AckAlarms) {
         h += '<div class="card mb-2"><div class="card-header">' + icon('power') + ' Generator Control</div><div class="card-body">';
         h += '<div id="sw-state" class="maint-switch-state mb-2">' +
           '<span class="kv-key">Current Switch Position</span> ' +
           '<span class="maint-sw-badge">' + esc(S.switchState) + '</span></div>';
 
         /* Generator actions */
-        h += '<div class="maint-cmd-section">' +
-          '<div class="maint-cmd-label">Generator Actions</div>' +
-          '<p class="form-hint" style="margin:0 0 8px">Start or stop the generator. Starting with transfer powers your house from the generator.</p>' +
-          '<div class="btn-group flex-wrap">';
-        if (info.RemoteTransfer)
-          h += '<button class="btn btn-success btn-sm" data-cmd="starttransfer">'+btnIcon('play')+' Start + Transfer</button>';
-        h += '<button class="btn btn-primary btn-sm" data-cmd="start">'+btnIcon('play')+' Start (No Transfer)</button>' +
-          '<button class="btn btn-danger btn-sm" data-cmd="stop">'+btnIcon('stop')+' Stop Generator</button>' +
-          '</div></div>';
+        if (info.RemoteCommands) {
+          h += '<div class="maint-cmd-section">' +
+            '<div class="maint-cmd-label">Generator Actions</div>' +
+            '<p class="form-hint" style="margin:0 0 8px">Start or stop the generator. Starting with transfer powers your house from the generator.</p>' +
+            '<div class="btn-group flex-wrap">';
+          if (info.RemoteTransfer)
+            h += '<button class="btn btn-success btn-sm" data-cmd="starttransfer">'+btnIcon('play')+' Start + Transfer</button>';
+          h += '<button class="btn btn-primary btn-sm" data-cmd="start">'+btnIcon('play')+' Start (No Transfer)</button>' +
+            '<button class="btn btn-danger btn-sm" data-cmd="stop">'+btnIcon('stop')+' Stop Generator</button>' +
+            '</div></div>';
+        }
 
         /* Switch position */
         if (info.RemoteButtons) {
@@ -3336,16 +3565,29 @@ var Pages = {
       if (info.buttons && info.buttons.length) {
         h += '<div class="card mb-2"><div class="card-header">' + icon('cpu') + ' Custom Commands</div><div class="card-body">';
         info.buttons.forEach(function(b, idx) {
-          var hasInputs = b.command_sequence && b.command_sequence.some(function(c){ return !!c.input_title; });
-          h += '<div class="custom-cmd-row mb-2">';
+          var inputs = (b.command_sequence || []).filter(function(c){ return !!c.input_title; });
+          var hasInputs = inputs.length > 0;
+          h += '<div class="custom-cmd-group mb-2">';
+          h += '<div class="custom-cmd-row">';
           h += '<button class="btn btn-outline btn-sm custom-btn" data-bi="'+idx+'">' + esc(b.title) + '</button>';
           if (hasInputs) {
             b.command_sequence.forEach(function(c, ci) {
               if (!c.input_title) return;
               h += ' <input type="text" class="input input-sm custom-cmd-input" id="cmd-input-'+idx+'-'+ci+'"' +
                 ' placeholder="' + esc(c.input_title) + '"' +
-                (c.tooltip ? ' title="' + esc(c.tooltip) + '"' : '') +
                 ' style="width:140px;display:inline-block">';
+            });
+          }
+          h += '</div>';
+          /* Tooltips shown inline (like the Settings page) instead of as hover popups.
+             A button-level tooltip (same level as onewordcommand) describes the whole
+             command; each command_sequence input may also define its own tooltip. */
+          if (b.tooltip) h += '<div class="form-hint">' + esc(b.tooltip) + '</div>';
+          if (hasInputs) {
+            b.command_sequence.forEach(function(c) {
+              if (!c.input_title || !c.tooltip) return;
+              var prefix = inputs.length > 1 ? esc(c.input_title) + ': ' : '';
+              h += '<div class="form-hint">' + prefix + esc(c.tooltip) + '</div>';
             });
           }
           h += '</div>';
@@ -3483,10 +3725,11 @@ var Pages = {
       });
       if (flat.length) {
         h += '<div class="card mb-2"><div class="card-header">' + icon('about') + ' Generator Info</div><div class="card-body">';
+        var flatRows = '';
         flat.forEach(function(f) {
-          h += '<div class="kv-row"><span class="kv-key">'+esc(f.key)+'</span><span class="kv-val">'+esc(f.val!=null?f.val:'--')+'</span></div>';
+          flatRows += UI.kvRow(f.key, f.val);
         });
-        h += '</div></div>';
+        h += UI.kvDl(flatRows) + '</div></div>';
       }
       var exHtml = '';
       function _collectExKv(items) {
@@ -3500,7 +3743,7 @@ var Pages = {
                 /* Skip "Exercise Time" — already shown formatted in #ex-info */
                 var kl = k.toLowerCase();
                 if (kl === 'exercise time' || kl === 'exercise frequency') continue;
-                exHtml += '<div class="kv-row"><span class="kv-key">'+esc(k)+'</span><span class="kv-val">'+esc(item[k]!=null?item[k]:'--')+'</span></div>';
+                exHtml += UI.kvRow(k, item[k]);
               }
             }
           }
@@ -3514,19 +3757,20 @@ var Pages = {
           return;
         }
         h += '<div class="card mb-2"><div class="card-header">' + icon('maintenance') + ' '+esc(s.name)+'</div><div class="card-body">';
+        var subRows = '';
         if (Array.isArray(s.items)) {
           s.items.forEach(function(item) {
             if (item && typeof item === 'object') {
               for (var k in item) {
                 if (item.hasOwnProperty(k))
-                  h += '<div class="kv-row"><span class="kv-key">'+esc(k)+'</span><span class="kv-val">'+esc(item[k]!=null?item[k]:'--')+'</span></div>';
+                  subRows += UI.kvRow(k, item[k]);
               }
             }
           });
         }
-        h += '</div></div>';
+        h += UI.kvDl(subRows) + '</div></div>';
       });
-      if (exHtml) $('#ex-data').html(exHtml);
+      if (exHtml) $('#ex-data').html(UI.kvDl(exHtml));
       $('#maint-data').html(h);
     },
     update: function(data) {
@@ -3574,28 +3818,41 @@ var Pages = {
       var h = '';
       if (flat.length) {
         h += '<div class="card mb-2"><div class="card-header">' + icon('outage') + ' Outage Status</div><div class="card-body">';
+        var flatRows = '';
         flat.forEach(function(f) {
           var cls = '';
           var kl = f.key.toLowerCase();
           if (kl === 'system in outage') cls = (String(f.val).toLowerCase() === 'yes') ? ' mon-val-warn' : ' mon-val-ok';
-          h += '<div class="kv-row"><span class="kv-key">'+esc(f.key)+'</span><span class="kv-val'+cls+'">'+esc(f.val!=null?f.val:'--')+'</span></div>';
+          flatRows += UI.kvRow(f.key, f.val, cls);
         });
-        h += '</div></div>';
+        h += UI.kvDl(flatRows) + '</div></div>';
       }
       subs.forEach(function(s) {
         var ic = secIcons[s.name] || '';
-        h += '<div class="card mb-2"><div class="card-header">' + ic + ' ' + esc(s.name) + '</div><div class="card-body">';
+        var secId = 'outage-h-' + String(s.name).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        h += '<div class="card mb-2"><h2 class="card-header" id="' + secId + '">' + ic + ' ' + esc(s.name) + '</h2><div class="card-body">';
         var items = Array.isArray(s.items) ? s.items : [s.items];
+        var strItems = [], kvRows = '';
         items.forEach(function(item) {
           if (typeof item === 'string') {
-            h += '<div class="kv-row" style="padding:4px 0;font-size:.85rem">' + esc(item) + '</div>';
+            strItems.push(item);
           } else if (item && typeof item === 'object') {
             for (var k in item) {
               if (item.hasOwnProperty(k))
-                h += '<div class="kv-row"><span class="kv-key">'+esc(k)+'</span><span class="kv-val">'+esc(item[k]!=null?item[k]:'--')+'</span></div>';
+                kvRows += UI.kvRow(k, item[k]);
             }
           }
         });
+        if (strItems.length) {
+          /* One list for log lines — same pattern as Logs / dashboard tiles */
+          h += '<ul class="logs-list" role="list" aria-labelledby="' + secId + '">';
+          strItems.forEach(function(line) {
+            h += '<li class="logs-entry" role="listitem"><span class="logs-entry-msg">' +
+              esc(line) + '</span></li>';
+          });
+          h += '</ul>';
+        }
+        h += UI.kvDl(kvRows);
         h += '</div></div>';
       });
       $('#outage-data').html(h || '<div class="text-muted text-center">No outage data.</div>');
@@ -3652,7 +3909,9 @@ var Pages = {
         var ic = secIcons[logName] || icon('logs');
         var count = Array.isArray(entries) ? entries.length : 0;
         var secId = 'logs-h-' + String(logName).toLowerCase().replace(/[^a-z0-9]+/g, '-');
-        h += '<section class="card mb-2" aria-labelledby="' + secId + '">' +
+        /* Use div+h2 (not labelled <section>) so AT gets one list without
+           region enter/exit between every entry — same pattern as dashboard tiles. */
+        h += '<div class="card mb-2">' +
           '<h2 class="card-header" id="' + secId + '">' +
           ic + ' ' + esc(logName);
         if (count) {
@@ -3661,20 +3920,22 @@ var Pages = {
         }
         h += '</h2><div class="card-body">';
         if (Array.isArray(entries) && entries.length) {
-          h += '<ul class="logs-list">';
+          /* role="list" restores list semantics when list-style is removed (WebKit) */
+          h += '<ul class="logs-list" role="list" aria-labelledby="' + secId + '">';
           entries.forEach(function(e) {
             var parts = Pages.logs._splitLogEntry(e);
-            h += '<li class="logs-entry">';
+            /* Inner flex wrapper — display:flex on <li> can break list continuity in AT */
+            h += '<li class="logs-entry" role="listitem"><div class="logs-entry-row">';
             if (parts.time) {
               h += '<time class="logs-entry-time">' + esc(parts.time) + '</time> ';
             }
-            h += '<span class="logs-entry-msg">' + esc(parts.msg || e) + '</span></li>';
+            h += '<span class="logs-entry-msg">' + esc(parts.msg || e) + '</span></div></li>';
           });
           h += '</ul>';
         } else {
           h += '<div class="text-muted">No entries.</div>';
         }
-        h += '</div></section>';
+        h += '</div></div>';
       }
       $('#logs-data').html(h || '<div class="text-muted text-center">No log data.</div>');
     },
@@ -3933,6 +4194,10 @@ var Pages = {
           h += '<div class="card mb-2"><div class="card-header">' + ic + ' ' + esc(secName) + '</div><div class="card-body">';
 
           if (Array.isArray(items)) {
+            var rows = '', body = '';
+            function flushRows() {
+              if (rows) { body += UI.kvDl(rows); rows = ''; }
+            }
             items.forEach(function(item) {
               if (item && typeof item === 'object') {
                 for (var k in item) {
@@ -3940,15 +4205,17 @@ var Pages = {
                   var v = item[k];
                   if (v && typeof v === 'object') {
                     /* nested sub-section */
-                    h += '<div class="mon-subsec"><div class="mon-subsec-title">' + esc(k) + '</div>';
-                    h += Pages.monitor._renderObj(v);
-                    h += '</div>';
+                    flushRows();
+                    body += '<div class="mon-subsec"><div class="mon-subsec-title">' + esc(k) + '</div>' +
+                      Pages.monitor._renderObj(v) + '</div>';
                   } else {
-                    h += Pages.monitor._kvRow(k, v);
+                    rows += Pages.monitor._kvRow(k, v);
                   }
                 }
               }
             });
+            flushRows();
+            h += body;
           } else if (items && typeof items === 'object') {
             /* External Data: object with named sub-sections */
             h += '<div class="ext-data-grid">';
@@ -3966,7 +4233,10 @@ var Pages = {
       $('#mon-data').html(h);
     },
     _renderObj: function(obj) {
-      var h = '';
+      var h = '', pending = '';
+      function flush() {
+        if (pending) { h += UI.kvDl(pending); pending = ''; }
+      }
       if (Array.isArray(obj)) {
         obj.forEach(function(item) {
           if (item && typeof item === 'object') {
@@ -3974,14 +4244,15 @@ var Pages = {
               if (!item.hasOwnProperty(k)) continue;
               var v = item[k];
               if (v && typeof v === 'object') {
+                flush();
                 h += '<div class="ext-data-nested"><div class="ext-data-nested-hdr">' + esc(k) + '</div>' +
                   Pages.monitor._renderObj(v) + '</div>';
               } else {
-                h += Pages.monitor._kvRow(k, v);
+                pending += Pages.monitor._kvRow(k, v);
               }
             }
           } else {
-            h += Pages.monitor._kvRow('#' + obj.indexOf(item), item);
+            pending += Pages.monitor._kvRow('#' + obj.indexOf(item), item);
           }
         });
       } else if (obj && typeof obj === 'object') {
@@ -3989,13 +4260,15 @@ var Pages = {
           if (!obj.hasOwnProperty(k)) continue;
           var v = obj[k];
           if (v && typeof v === 'object') {
+            flush();
             h += '<div class="ext-data-nested"><div class="ext-data-nested-hdr">' + esc(k) + '</div>' +
               Pages.monitor._renderObj(v) + '</div>';
           } else {
-            h += Pages.monitor._kvRow(k, v);
+            pending += Pages.monitor._kvRow(k, v);
           }
         }
       }
+      flush();
       return h;
     },
     _kvRow: function(k, v) {
@@ -4017,8 +4290,7 @@ var Pages = {
         var vl = val.toLowerCase();
         cls = (vl === 'ok' || vl === 'sleeping' || vl === 'mppt') ? ' mon-val-ok' : ' mon-val-warn';
       }
-      return '<div class="kv-row"><span class="kv-key">' + esc(k) +
-        '</span><span class="kv-val' + cls + '">' + esc(val) + '</span></div>';
+      return UI.kvRow(k, val, cls);
     }
   },
 
@@ -4339,11 +4611,14 @@ var Pages = {
       h += '<button class="btn btn-sm btn-outline-danger" id="sl-clear">&times; Clear Log</button>';
       h += '<button class="btn btn-sm btn-outline" id="sl-ack">' + btnIcon('check', 14) + ' Acknowledge Errors</button>';
       h += '<button class="btn btn-sm btn-outline" id="sl-refresh">' + btnIcon('refresh', 14) + ' Refresh</button>';
+      // Genmon UI with Web Push Log support
       h += '</div></div>';
       h += '<div style="margin-top:12px; margin-bottom:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">';
       h += '<button class="btn btn-sm sl-tab btn-primary" data-tab="sync">Maintenance Sync Log <span id="sl-badge-sync"></span></button>';
       h += '<button class="btn btn-sm sl-tab btn-outline" data-tab="backup">Daily Backup Log <span id="sl-badge-backup"></span></button>';
       h += '<button class="btn btn-sm sl-tab btn-outline" data-tab="sdcard">Weekly SD Card Log <span id="sl-badge-sdcard"></span></button>';
+      h += '<button class="btn btn-sm sl-tab btn-outline" data-tab="watchdog">Network Watchdog <span id="sl-badge-watchdog"></span></button>';
+      h += '<button class="btn btn-sm sl-tab btn-outline" data-tab="webpush">Web Push Log <span id="sl-badge-webpush"></span></button>';
       h += '<input type="text" id="sl-search" class="form-control" style="max-width:240px; margin-left:auto;" placeholder="Search log lines…">';
       h += '</div>';
       h += '<div id="sl-status-banner" style="margin-bottom:12px;"></div>';
@@ -4377,7 +4652,7 @@ var Pages = {
 
       $('#sl-clear').on('click', function() {
         var tabKey = self._activeTab;
-        var names = { sync: 'Maintenance Sync Log', backup: 'Daily Backup Log', sdcard: 'Weekly SD Card Log' };
+        var names = { sync: 'Maintenance Sync Log', backup: 'Daily Backup Log', sdcard: 'Weekly SD Card Log', watchdog: 'Network Watchdog Log', webpush: 'Web Push Log' };
         var logName = names[tabKey] || 'Log';
 
         Modal.confirm('Clear Log', 'Are you sure you want to clear all entries in the ' + logName + '?', function() {
@@ -4400,6 +4675,8 @@ var Pages = {
       if (tabKey === 'sync') return self._data.sync_log;
       if (tabKey === 'backup') return self._data.backup_log;
       if (tabKey === 'sdcard') return self._data.sdcard_backup_log;
+      if (tabKey === 'watchdog') return self._data.net_watchdog_log;
+      if (tabKey === 'webpush') return self._data.genwebpush_log;
       return null;
     },
     _load: function() {
@@ -4457,7 +4734,7 @@ var Pages = {
         return { unackError: unackError, unackWarn: unackWarn };
       }
 
-      ['sync', 'backup', 'sdcard'].forEach(function(key) {
+      ['sync', 'backup', 'sdcard', 'watchdog', 'webpush'].forEach(function(key) {
         var obj = self._getTabLogData(key);
         var st = evalTabStatus(key, obj);
         var $b = $('#sl-badge-' + key);
@@ -4694,6 +4971,7 @@ var Pages = {
       usehttps:'security', usemfa:'security', mfa_url:'security', mfa_enrolled:'security', email_configured:'security',
       remember_me_days:'security', mfa_trust_days:'security', mfa_trust_extend:'security',
       cert_mode:'security', cert_info:'security', certfile:'security', keyfile:'security',
+      allow_iframe:'security',
       port:'comms', use_serial_tcp:'comms', serial_tcp_address:'comms',
       serial_tcp_port:'comms', modbus_tcp:'comms', serial_tcp_keepalive:'comms',
       disableweather:'weather', minimumweatherinfo:'weather', metricweather:'system',
@@ -4745,11 +5023,11 @@ var Pages = {
          when value for inverted keys so the DOM check logic stays simple. */
       var DEPS = {
         disableweather:  { disables:['minimumweatherinfo','weatherkey','weatherlocation'], when:false },
-        usehttps:        { disables:['cert_mode','certfile','keyfile','http_user','http_pass','http_user_ro','http_pass_ro','usemfa','mfa_url'], when:false },
+        usehttps:        { disables:['cert_mode','certfile','keyfile','usemfa','mfa_url'], when:false },
         usemfa:          { disables:['mfa_url','mfa_trust_extend','mfa_trust_days'], when:false },
         mfa_trust_extend:{ disables:['mfa_trust_days'], when:false },
         use_serial_tcp:  { disables:['serial_tcp_address','serial_tcp_port','modbus_tcp','serial_tcp_keepalive'], when:false },
-        disablesmtp:     { disables:['email_account','email_pw','sender_account','sender_name','smtp_server','smtp_port','ssl_enabled','tls_disable','smtpauth_disable'], when:false },
+        disablesmtp:     { disables:['email_account','email_pw','sender_account','sender_name','smtp_server','smtp_port','ssl_enabled','tls_disable','use_html','smtpauth_disable'], when:false },
         disableimap:     { disables:['imap_server','readonlyemailcommands','incoming_mail_folder','processed_mail_folder'], when:false },
         disableoutagecheck: { disables:[], when:false },
         disablepowerlog:    { disables:[], when:false }
@@ -4760,7 +5038,7 @@ var Pages = {
         { id:'email-smtp', toggle:'disablesmtp', label:'Outbound Email (SMTP)',
           icon:'upload',
           desc:'Configure an SMTP server to send email alerts and notifications.',
-          fields:['email_account','email_pw','sender_account','sender_name','smtp_server','smtp_port','ssl_enabled','smtpauth_disable','tls_disable'] },
+          fields:['email_account','email_pw','sender_account','sender_name','smtp_server','smtp_port','ssl_enabled','smtpauth_disable','tls_disable','use_html'] },
         { id:'email-imap', toggle:'disableimap', label:'Inbound Email Commands (IMAP)',
           icon:'download',
           desc:'Allow genmon to receive and process commands via email.',
@@ -4773,14 +5051,14 @@ var Pages = {
           icon:'lock',
           desc:'Encrypt all traffic between your browser and the server.',
           fields:['cert_mode','certfile','keyfile'] },
-        { id:'sec-auth',   parent:'usehttps', label:'Password Authentication',
+        { id:'sec-auth',   label:'Password Authentication',
           icon:'user',
           desc:'Require a username and password to access the web interface. You can create a full-access admin account and an optional limited-rights account.',
           fields:['http_user','http_pass','http_user_ro','http_pass_ro'] },
-        { id:'sec-session', parent:'usehttps', label:'Session & Remember Me',
+        { id:'sec-session', label:'Session & Remember Me',
           icon:'clock',
           desc:'Set how many days the browser remembers your login. Set to 0 for a browser-session only \u2014 you\u2019ll be logged out when you close the browser.',
-          fields:['remember_me_days'] },
+          fields:['remember_me_days'], custom: 'session' },
         { id:'sec-mfa',    parent:'usehttps', label:'Multi-Factor Authentication',
           icon:'shield',
           desc:'Add a second layer of security. After entering your password you\u2019ll need a code from an authenticator app (Google Authenticator, Authy, etc.). MFA applies to all accounts; passkeys and backup codes are admin-only.',
@@ -4856,6 +5134,8 @@ var Pages = {
           (buckets[c.id] || []).forEach(function(s) { secMap[s.key] = s; });
           /* Port field */
           if (secMap['http_port']) h += UI.formField('http_port', secMap['http_port'].def, secMap['http_port'].def[3]);
+          /* iframe embedding toggle (applies over http and https) */
+          if (secMap['allow_iframe']) h += UI.formField('allow_iframe', secMap['allow_iframe'].def, secMap['allow_iframe'].def[3]);
           /* Master toggle: usehttps */
           if (secMap['usehttps']) h += UI.formField('usehttps', secMap['usehttps'].def, secMap['usehttps'].def[3]);
           h += '<div class="set-url-warn" id="sec-url-warn" style="display:none">' +
@@ -5109,6 +5389,13 @@ var Pages = {
                 h += UI.formField(fk, secMap[fk].def, secMap[fk].def[3]);
               }
             });
+            /* Custom UI for global session termination */
+            if (sub.custom === 'session') {
+              h += '<div style="margin-top:15px; padding-top:15px; border-top:1px solid var(--border);">' +
+                '<p style="font-size:0.85rem; color:var(--text-muted); margin-top:0; margin-bottom:8px;">If you left yourself logged in on a public computer or lost a device, you can instantly terminate all active sessions across all devices.</p>' +
+                '<button type="button" class="btn btn-sm" id="logout-all-btn" style="background:var(--danger); border-color:var(--danger); color:#fff;">' + icon('alert') + ' Logout All Devices</button>' +
+                '</div>';
+            }
             /* Custom UI for passkey management */
             if (sub.custom === 'passkey') {
               h += '<div id="passkey-manage">' +
@@ -5246,6 +5533,13 @@ var Pages = {
       h += '</div>' +
         '<div class="form-actions" style="border:none;margin-top:12px">' +
         '<button class="btn btn-sm btn-outline" id="n-add">'+btnIcon('plus')+' Add Recipient</button></div></div></div>';
+      
+      /* Web Push Notifications (PWA) Card */
+      h += '<div class="card" style="margin-top:16px"><div class="card-header">'+btnIcon('notifications')+' Mobile App &amp; Web Push Notifications (PWA)</div><div class="card-body">' +
+        '<p style="margin-bottom:12px;color:var(--text-muted)">Configure real-time push alerts and trigger preferences for your iOS (16.4+) or Android PWA home screen app.</p>' +
+        '<button class="btn btn-primary btn-sm" type="button" onclick="document.getElementById(\'pwa-push-modal\').classList.remove(\'hidden\')">' +
+        btnIcon('settings',14)+' Configure Push Alert Preferences</button></div></div>';
+
       h += '<div class="set-save-bar"><button class="btn btn-success" id="n-save">'+btnIcon('save')+' Save Settings</button></div>';
       h += '</div>';
       h += '</div>'; /* close #set-panels */
@@ -5429,7 +5723,7 @@ var Pages = {
         _secSlide($w.find('#f_http_port').closest('.setting-field'), !httpsOn, dur);
         /* Show/hide hint + sub-sections */
         _secSlide($w.find('#sec-off-hint'), !httpsOn, dur);
-        $w.find('.set-sec-group').each(function(){ _secSlide($(this), httpsOn, dur); });
+        _secSlide($w.find('#sec-https'), httpsOn, dur);
         /* Self-signed cert → own cert fields */
         var certMode = $w.find('#f_cert_mode').val() || 'selfsigned';
         $w.find('#f_certfile, #f_keyfile').closest('.setting-field').each(function(){
@@ -5497,7 +5791,7 @@ var Pages = {
         var isSecure = location.protocol === 'https:';
         _secSlide($w.find('#sec-passkey'), isSecure && httpsOn && mfaOn, dur);
         _secSlide($w.find('#sec-backup'), isSecure && httpsOn && mfaOn, dur);
-        _secSlide($w.find('#sec-session'), httpsOn, dur);
+        _secSlide($w.find('#sec-session'), true, dur);
         /* Reset verification when MFA is freshly toggled on */
         if (mfaOn && !_origMfa && !_mfaEnrolled) {
           _mfaVerified = false;
@@ -5767,6 +6061,12 @@ var Pages = {
         }).fail(function() { $list.html('<em>Could not load passkeys.</em>'); });
       }
       if (_origMfa || _mfaEnrolled) { loadPasskeys(); }
+      $w.on('click', '#logout-all-btn', function() {
+        if (confirm("Are you sure you want to log out ALL devices? Every browser will be forced to log in again.")) {
+          window.location.href = window.location.protocol + '//' + window.location.host + '/logout_all';
+        }
+      });
+
       $w.on('click', '#passkey-register-btn', function() {
         var btn = this; btn.disabled = true;
         var h = location.hostname;
@@ -5873,7 +6173,8 @@ var Pages = {
             password:        $w.find('#f_email_pw').val(),
             use_ssl:        ($w.find('#f_ssl_enabled').is(':checked')),
             tls_disable:    ($w.find('#f_tls_disable').is(':checked')),
-            smtpauth_disable:($w.find('#f_smtpauth_disable').is(':checked'))
+            smtpauth_disable:($w.find('#f_smtpauth_disable').is(':checked')),
+            use_html:       ($w.find('#f_use_html').is(':checked'))
           });
           API.get('test_email?test_email=' + encodeURIComponent(payload), 15000)
             .done(function(r) {
@@ -6065,10 +6366,10 @@ var Pages = {
       /* 2. External SVG file  (drop {key}.svg into static/svg/) */
       /* 3. External PNG file  (drop {key}.png into static/images/) */
       /* On error, cascade: SVG → PNG → embedded genmon gear fallback */
-      return '<img class="adn-icon" src="svg/' + encodeURIComponent(name) + '.svg" onerror="'
+      return '<img class="adn-icon" src="/static/svg/' + encodeURIComponent(name) + '.svg" onerror="'
         + "this.onerror=function(){this.replaceWith(document.createRange().createContextualFragment("
         + "'<svg class=adn-icon><use href=#adn-genmon></use></svg>'))};" 
-        + 'this.src="images/' + encodeURIComponent(name) + '.png"' + '">';
+        + 'this.src="/static/images/' + encodeURIComponent(name) + '.png"' + '">';
     },
     render: function($c) {
       var h = '<div class="page-title">'+icon('addons')+' Add-Ons</div>';
@@ -6433,12 +6734,14 @@ var Pages = {
 
       /* --- Software & Info card --- */
       h += '<div class="card mb-2"><div class="card-header">' + icon('cpu') + ' Software</div><div class="card-body">';
+      var softRows = '';
       [['Genmon Version', info.version],
        ['Python', info.python], ['Platform', info.platform],
        ['OS Architecture', (info.os_bits||'')], ['Install Date', info.install]
       ].forEach(function(f){
-        if (f[1]) h += '<div class="kv-row"><span class="kv-key">'+esc(f[0])+'</span><span class="kv-val">'+esc(f[1])+'</span></div>';
+        if (f[1]) softRows += UI.kvRow(f[0], f[1]);
       });
+      h += UI.kvDl(softRows);
       h += '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">' +
         '<button class="btn btn-outline btn-sm" id="a-changelog">'+btnIcon('logs')+' View Changelog</button>';
       if (S.writeAccess || !info.LoginActive)
@@ -6447,15 +6750,16 @@ var Pages = {
 
       /* --- Generator card --- */
       h += '<div class="card mb-2"><div class="card-header">' + icon('zap') + ' Generator</div><div class="card-body">';
+      var genRows = '';
       [['Model', info.model||info.Controller], ['Controller', info.Controller],
        ['Firmware', info.Firmware], ['Hardware', info.Hardware],
        ['Fuel Type', info.fueltype], ['Nominal kW', info.nominalKW],
        ['Nominal RPM', info.nominalRPM], ['Frequency', info.nominalfrequency],
        ['Phase', info.phase]
       ].forEach(function(f){
-        h += '<div class="kv-row"><span class="kv-key">'+esc(f[0])+'</span><span class="kv-val">'+esc(f[1]||'--')+'</span></div>';
+        genRows += UI.kvRow(f[0], f[1] || '--');
       });
-      h += '</div></div>';
+      h += UI.kvDl(genRows) + '</div></div>';
 
       /* --- Request Help card --- */
       h += '<div class="card mb-2"><div class="card-header">' + icon('mail') + ' Request Help</div><div class="card-body">' +
@@ -6654,7 +6958,7 @@ var Pages = {
         };
         /* Fetch messages/warnings directly from GitHub (not from genmon) */
         $.ajax({ url: 'https://raw.githubusercontent.com/jgyates/genmon/master/data/messages.json',
-          dataType: 'json', timeout: 8000, cache: false
+          dataType: 'json', timeout: 2000, cache: false
         }).done(function(d) {
           _doUpdate(d || {});
         }).fail(function() {
@@ -6694,7 +6998,8 @@ var Pages = {
     _showChangelog: function(){
       var url = 'https://raw.githubusercontent.com/jgyates/genmon/master/changelog.md';
       Modal.show('Changelog', Modal.html(
-        '<div class="changelog-body" style="padding:8px;font-size:.85rem;color:var(--text-1)">' +
+        '<div class="changelog-body" role="region" aria-label="Changelog" ' +
+        'style="padding:8px;font-size:.85rem;color:var(--text-1)">' +
         '<div class="text-muted text-center">Loading changelog…</div></div>'), []);
       $.get(url).done(function(md){
         var html = md
@@ -6942,8 +7247,8 @@ var Pages = {
    ============================================================ */
 function init() {
   Modal.init();
-  Store._pull();
   Theme.init();
+  Store._pull();
 
   /* Flush any pending Store writes when the tab/window closes */
   window.addEventListener('beforeunload', function() { Store._flush(); });
@@ -6954,7 +7259,15 @@ function init() {
 
   API.get('start_info_json', 10000)
     .done(function(data) {
-      if (!data) { Modal.alert('Error','Failed to load generator info.'); return; }
+      if (!data || data === 'Retry' || (typeof data === 'string' && (data.indexOf('Retry') >= 0 || data.indexOf('<form') >= 0 || data.indexOf('<!DOCTYPE') >= 0))) {
+        if (typeof data === 'string' && (data.indexOf('<form') >= 0 || data.indexOf('<!DOCTYPE') >= 0)) {
+          window.location.href = '/';
+          return;
+        }
+        $('.loader-text').text('Initializing generator connection\u2026');
+        setTimeout(init, 1500);
+        return;
+      }
       S.startInfo   = data;
       S.writeAccess = data.write_access !== false;
 
@@ -6962,14 +7275,13 @@ function init() {
         $('#site-name').text(data.sitename);
         document.title = data.sitename + ' \u2014 Genmon';
       }
-      if (data.version) $('#footer-version').text('Genmon ' + data.version);
+      var addonVersion = 'Oz Custom Addons v1.3.0';
+      if (data.version) $('#footer-version').text('Genmon ' + data.version + ' \u2014 ' + addonVersion);
 
-      /* Show logout button when authentication is active */
-      if (data.LoginActive) {
-        $('#logout-btn').show().on('click', function() {
-          window.location.href = window.location.protocol + '//' + window.location.host + '/logout';
-        });
-      }
+      /* Enable logout & cache purge button for all users */
+      $('#logout-btn').show().off('click').on('click', function() {
+        window.location.href = window.location.protocol + '//' + window.location.host + '/logout';
+      });
 
       /* Fetch metric setting for 24-hour clock display */
       API.get('settings', 8000).done(function(sd){
@@ -6989,8 +7301,8 @@ function init() {
       }
     })
     .fail(function() {
-      $('.loader-text').text('Connection failed. Retrying\u2026');
-      setTimeout(init, 5000);
+      $('.loader-text').text('Connecting\u2026');
+      setTimeout(init, 1500);
     });
 }
 
