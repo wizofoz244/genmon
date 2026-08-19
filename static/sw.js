@@ -1,6 +1,19 @@
+/**
+ * @fileoverview Progressive Web App (PWA) Service Worker for Genmon.
+ * Handles offline static asset caching, background Web Push notifications,
+ * and notification click window focus / navigation.
+ *
+ * Complies with Google JavaScript Style Guide standards.
+ */
+
+/** @const {string} Current cache storage name. */
 const CACHE_NAME = 'genmon-v9';
-// Core assets kept for offline use only. Navigation/HTML is intentionally NOT
-// listed here so login/auth pages are never served stale from the cache.
+
+/**
+ * Core assets kept for offline resilience. Navigation and dynamic API responses
+ * are excluded so authentication state is always verified live.
+ * @const {!Array<string>}
+ */
 const SHELL_ASSETS = [
   '/css/genmon.css',
   '/js/genmon.js',
@@ -11,52 +24,70 @@ const SHELL_ASSETS = [
   '/manifest.webmanifest'
 ];
 
-self.addEventListener('install', event => {
+/**
+ * Service Worker install event handler. Pre-caches shell assets.
+ */
+self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => {
+    caches.open(CACHE_NAME).then((cache) => {
       return Promise.all(
-        SHELL_ASSETS.map(url => cache.add(url).catch(err => console.log('SW asset caching skipped:', url, err)))
+        SHELL_ASSETS.map((url) =>
+          cache.add(url).catch((err) =>
+            console.log('SW asset caching skipped:', url, err)
+          )
+        )
       );
     }).then(() => self.skipWaiting())
   );
 });
 
-self.addEventListener('activate', event => {
+/**
+ * Service Worker activation handler. Evicts stale caches.
+ */
+self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+    caches.keys().then((keys) =>
+      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
 });
 
-self.addEventListener('fetch', event => {
+/**
+ * Fetch event listener. Applies network-first strategy for static assets,
+ * bypassing documents and dynamic API routes.
+ */
+self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
 
-  // Never intercept navigations/documents: HTML must always come from the
-  // network so login and auth state are never served stale from the cache.
+  // Never intercept document navigations to preserve live auth state
   if (req.mode === 'navigate' || req.destination === 'document') return;
 
   const url = new URL(req.url);
-  // API calls and dynamic content: network only, never cache.
+  // API calls and dynamic commands: network only
   if (url.pathname.startsWith('/cmd/') || url.pathname.startsWith('/api/')) return;
 
-  // Network-first for static assets: always try a fresh copy, and fall back to
-  // the cache only when the network is unavailable (offline resilience).
   event.respondWith(
-    fetch(req).then(response => {
+    fetch(req).then((response) => {
       if (response && response.ok) {
         const clone = response.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(req, clone));
+        caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
       }
       return response;
     }).catch(() => caches.match(req))
   );
 });
 
-// --- Web Push Notification Event Handlers ---
-self.addEventListener('push', event => {
-  let data = { title: '⚡ Genmon Alert', body: 'New generator notification received.', icon: '/icons/icon-192x192.png' };
+/**
+ * Push event listener. Receives VAPID-signed Web Push payloads from Genmon daemon.
+ */
+self.addEventListener('push', (event) => {
+  let data = {
+    title: '⚡ Genmon Alert',
+    body: 'New generator notification received.',
+    icon: '/icons/icon-192x192.png'
+  };
+
   if (event.data) {
     try {
       data = event.data.json();
@@ -78,16 +109,24 @@ self.addEventListener('push', event => {
   };
 
   event.waitUntil(
-    self.registration.showNotification(data.title || '⚡ Genmon Notification', options)
+    self.registration.showNotification(
+      data.title || '⚡ Genmon Notification',
+      options
+    )
   );
 });
 
-self.addEventListener('notificationclick', event => {
+/**
+ * Notification click listener. Focuses active Genmon browser window or opens root.
+ */
+self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = (event.notification.data && event.notification.data.url) ? event.notification.data.url : '/';
+  const targetUrl = (event.notification.data && event.notification.data.url)
+    ? event.notification.data.url
+    : '/';
 
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windowClients => {
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
       for (let i = 0; i < windowClients.length; i++) {
         const client = windowClients[i];
         if (client.url.includes(location.host) && 'focus' in client) {

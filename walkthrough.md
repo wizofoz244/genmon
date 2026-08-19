@@ -229,7 +229,13 @@ if fwd_host:
     for h in fwd_host.split(","):
         trusted_hosts.add(h.strip())
 ```
-This ensures state-modifying requests (`POST /api/webpush/subscribe`, `POST /api/webpush/preferences`) succeed transparently through reverse proxies.
+This ensures state-modifying requests (`POST /api/webpush/subscribe`, `POST /api/webpush/preferences`, `POST /api/security/cert/regenerate`) succeed transparently through reverse proxies.
+
+### Automated 90-Day Tailscale Certificate Lifecycle & Watchdog
+Tailscale issues Let's Encrypt certificates with a strict **90-day validity period**. To prevent silent expiration outages:
+1. **`cert_mode = tailscale`**: Automatically obtains certificates via `tailscale cert <node>.ts.net`.
+2. **Background Watchdog Daemon (`StartCertRenewalWatchdog`)**: Runs every 12 hours in `genserv.py`, automatically executing `tailscale cert` whenever a certificate is within **30 days** of expiring.
+3. **Manual Regeneration UI**: Administrators can click the **`[ 🔄 Renew / Regenerate Certificate ]`** button under **Settings → Security Settings** to immediately fetch a fresh certificate or re-generate LAN SAN entries with real-time UI status updates.
 
 ---
 

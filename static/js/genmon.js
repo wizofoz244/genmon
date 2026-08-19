@@ -5142,6 +5142,9 @@ var Pages = {
                   { val:'localca',    icon:'shield', title:'Trusted Local CA',
                     desc:'Generate a local CA you import into your browser once.',
                     pro:'No browser warnings', con:'One-time import per device' },
+                  { val:'tailscale',  icon:'cloud',  title:'Tailscale HTTPS',
+                    desc:'Official Let\'s Encrypt certificates via Tailscale.',
+                    pro:'Auto-renewed & trusted', con:'Requires Tailscale on host' },
                   { val:'custom',     icon:'upload', title:'Your Own Certificate',
                     desc:'Use a certificate you obtained elsewhere.',
                     pro:'Full control', con:'Manual renewal required' }
@@ -5163,25 +5166,7 @@ var Pages = {
                 h += '</div>'; /* .cert-mode-cards */
 
                 /* Cert status info */
-                h += '<div class="cert-status" id="cert-status">';
-                if (curMode === 'selfsigned') {
-                  h += '<div class="cert-status-line">' + icon('about') + ' Ephemeral certificate \u2014 regenerated on each restart. Browsers will show a security warning.</div>';
-                } else if (curMode === 'localca') {
-                  if (certInfo.ca_created) {
-                    h += '<div class="cert-status-line">' + icon('check') + ' CA created: ' + esc(certInfo.ca_created) + '</div>';
-                  }
-                  if (certInfo.srv_expiry) {
-                    h += '<div class="cert-status-line">' + icon('check') + ' Server cert expires: ' + esc(certInfo.srv_expiry) + '</div>';
-                  }
-                  if (certInfo.san) {
-                    h += '<div class="cert-status-line">' + icon('about') + ' SAN: ' + esc(certInfo.san) + '</div>';
-                  }
-                } else if (curMode === 'custom') {
-                  if (certInfo.expiry) {
-                    h += '<div class="cert-status-line">' + icon('check') + ' Certificate expires: ' + esc(certInfo.expiry) + '</div>';
-                  }
-                }
-                h += '</div>';
+                h += '<div class="cert-status" id="cert-status"></div>';
 
                 /* Browser import wizard (localca only, shown when on HTTPS) */
                 h += '<div class="cert-import-wizard" id="cert-import-wizard" style="display:none">' +
@@ -5680,6 +5665,61 @@ var Pages = {
       var _mfaVerified = _origMfa || _mfaEnrolled;
       var _secInitial = true;
       var _certInfo = {};
+
+      function _renderCertStatusHtml(mode, ci, isHttps) {
+        ci = ci || {};
+        var sh = '';
+        var daysSuffix = function(days) {
+          if (days === null || typeof days === 'undefined') return '';
+          if (days === 0) return ' <strong style="color:#ef4444">(expires today)</strong>';
+          if (days === 1) return ' <strong style="color:#ef4444">(1 day remaining)</strong>';
+          if (days <= 30) return ' <strong style="color:#f59e0b">(' + days + ' days remaining)</strong>';
+          return ' <span style="color:var(--text-muted)">(' + days + ' days remaining)</span>';
+        };
+
+        if (mode === 'selfsigned') {
+          if (ci.srv_expiry) {
+            sh += '<div class="cert-status-line">' + icon('check') + ' Self-signed cert expires: <strong>' + esc(ci.srv_expiry) + '</strong>' + daysSuffix(ci.days_remaining) + '</div>';
+            if (ci.san) sh += '<div class="cert-status-line">' + icon('about') + ' SAN: ' + esc(ci.san) + '</div>';
+          } else {
+            sh += '<div class="cert-status-line">' + icon('about') + ' Ephemeral certificate \u2014 regenerated on each restart. Browsers will show a security warning.</div>';
+          }
+          if (isHttps) {
+            sh += '<div style="margin-top:8px"><button type="button" class="btn btn-sm btn-cert-renew" id="btn-cert-renew">' + btnIcon('refresh', 14) + ' Regenerate Certificate</button></div>';
+          }
+        } else if (mode === 'localca') {
+          if (ci.ca_created) sh += '<div class="cert-status-line">' + icon('check') + ' CA created: ' + esc(ci.ca_created) + '</div>';
+          if (ci.srv_expiry) sh += '<div class="cert-status-line">' + icon('check') + ' Server cert expires: <strong>' + esc(ci.srv_expiry) + '</strong>' + daysSuffix(ci.days_remaining) + '</div>';
+          if (ci.san) sh += '<div class="cert-status-line">' + icon('about') + ' SAN: ' + esc(ci.san) + '</div>';
+          if (!sh && isHttps)
+            sh = '<div class="cert-status-line">' + icon('check') + ' Local CA is active. Download the certificate below to import it into your browser.</div>';
+          if (!sh) sh = '<div class="cert-status-line">' + icon('about') + ' Local CA will be generated when you save and restart.</div>';
+          if (isHttps && (ci.ca_created || ci.srv_expiry)) {
+            sh += '<div style="margin-top:8px"><button type="button" class="btn btn-sm btn-cert-renew" id="btn-cert-renew">' + btnIcon('refresh', 14) + ' Regenerate Server Certificate</button></div>';
+          }
+        } else if (mode === 'tailscale') {
+          if (ci.domain) sh += '<div class="cert-status-line">' + icon('cloud') + ' Tailscale Domain: <strong>' + esc(ci.domain) + '</strong></div>';
+          if (ci.srv_expiry) {
+            sh += '<div class="cert-status-line">' + icon('check') + ' Let\'s Encrypt cert expires: <strong>' + esc(ci.srv_expiry) + '</strong>' + daysSuffix(ci.days_remaining) + '</div>';
+            if (ci.issuer) sh += '<div class="cert-status-line">' + icon('shield') + ' Issuer: ' + esc(ci.issuer) + '</div>';
+            if (ci.san) sh += '<div class="cert-status-line">' + icon('about') + ' SAN: ' + esc(ci.san) + '</div>';
+            sh += '<div class="cert-status-line" style="color:var(--text-muted);font-size:.78rem">' + icon('check') + ' Auto-renewal active: checks daily and renews before 90-day expiry.</div>';
+          } else {
+            sh += '<div class="cert-status-line">' + icon('about') + ' ' + (ci.detail || 'Tailscale certificate will be fetched automatically via Tailscale CLI.') + '</div>';
+          }
+          if (isHttps) {
+            sh += '<div style="margin-top:8px"><button type="button" class="btn btn-sm btn-cert-renew" id="btn-cert-renew">' + btnIcon('refresh', 14) + ' Renew Tailscale Certificate</button></div>';
+          }
+        } else if (mode === 'custom') {
+          if (ci.mode === 'custom' && ci.expiry) {
+            sh += '<div class="cert-status-line">' + icon('check') + ' Certificate expires: <strong>' + esc(ci.expiry) + '</strong>' + daysSuffix(ci.days_remaining) + '</div>';
+          } else {
+            sh += '<div class="cert-status-line">' + icon('about') + ' Provide your certificate and key file paths below.</div>';
+          }
+        }
+        return sh;
+      }
+
       function applySecVis() {
         var dur = _secInitial ? 0 : 250;
         var httpsOn = $w.find('#f_usehttps').is(':checked');
@@ -5708,27 +5748,7 @@ var Pages = {
         /* Cert status: update content + visibility per selected mode */
         var $certStatus = $w.find('#cert-status');
         if (httpsOn) {
-          var ci = _certInfo || {};
-          var sh = '';
-          if (certMode === 'selfsigned') {
-            sh = '<div class="cert-status-line">' + icon('about') + ' Ephemeral certificate \u2014 regenerated on each restart. Browsers will show a security warning.</div>';
-          } else if (certMode === 'localca') {
-            if (ci.mode === 'localca') {
-              if (ci.ca_created) sh += '<div class="cert-status-line">' + icon('check') + ' CA created: ' + esc(ci.ca_created) + '</div>';
-              if (ci.srv_expiry) sh += '<div class="cert-status-line">' + icon('check') + ' Server cert expires: ' + esc(ci.srv_expiry) + '</div>';
-              if (ci.san) sh += '<div class="cert-status-line">' + icon('about') + ' SAN: ' + esc(ci.san) + '</div>';
-            }
-            if (!sh && location.protocol === 'https:')
-              sh = '<div class="cert-status-line">' + icon('check') + ' Local CA is active. Download the certificate below to import it into your browser.</div>';
-            if (!sh) sh = '<div class="cert-status-line">' + icon('about') + ' Local CA will be generated when you save and restart.</div>';
-          } else if (certMode === 'custom') {
-            if (ci.mode === 'custom' && ci.expiry) {
-              sh = '<div class="cert-status-line">' + icon('check') + ' Certificate expires: ' + esc(ci.expiry) + '</div>';
-            } else {
-              sh = '<div class="cert-status-line">' + icon('about') + ' Provide your certificate and key file paths below.</div>';
-            }
-          }
-          $certStatus.html(sh);
+          $certStatus.html(_renderCertStatusHtml(certMode, _certInfo, location.protocol === 'https:'));
         }
         _secSlide($certStatus, httpsOn, dur);
         /* MFA: requires HTTPS running + password auth already active.
@@ -5812,6 +5832,55 @@ var Pages = {
         $(this).addClass('cert-tab-sel');
         $(this).closest('.cert-import-wizard').find('.cert-tab-content').hide()
           .filter('[data-for="'+tab+'"]').show();
+      });
+      /* Certificate manual regeneration button */
+      $w.on('click', '#btn-cert-renew', function() {
+        var $btn = $(this);
+        var origHtml = $btn.html();
+        $btn.prop('disabled', true).html(btnIcon('refresh', 14) + ' Renewing...');
+        var csrf = typeof CSRF_TOKEN !== 'undefined' ? CSRF_TOKEN : '';
+        $.ajax({
+          url: '/api/security/cert/regenerate',
+          type: 'POST',
+          headers: { 'X-CSRFToken': csrf },
+          contentType: 'application/json',
+          dataType: 'json',
+          timeout: 45000,
+          success: function(resp) {
+            $btn.prop('disabled', false).html(origHtml);
+            if (resp && resp.status === 'ok') {
+              if (resp.cert_info) {
+                _certInfo = resp.cert_info;
+              }
+              applySecVis();
+              if (typeof UI !== 'undefined' && UI.toast) {
+                UI.toast('success', resp.message || 'Certificate renewed successfully!');
+              } else {
+                alert(resp.message || 'Certificate renewed successfully!');
+              }
+            } else {
+              var msg = (resp && resp.message) || 'Failed to renew certificate.';
+              if (typeof UI !== 'undefined' && UI.toast) {
+                UI.toast('error', msg);
+              } else {
+                alert(msg);
+              }
+            }
+          },
+          error: function(xhr) {
+            $btn.prop('disabled', false).html(origHtml);
+            var err = 'Failed to renew certificate.';
+            try {
+              var j = JSON.parse(xhr.responseText);
+              if (j && j.message) err = j.message;
+            } catch(e) {}
+            if (typeof UI !== 'undefined' && UI.toast) {
+              UI.toast('error', err);
+            } else {
+              alert(err);
+            }
+          }
+        });
       });
       applySecVis();
 

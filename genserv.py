@@ -5213,7 +5213,7 @@ def ReadSettingsFromFile():
         203,
         "selfsigned",
         "",
-        "selfsigned,localca,custom",
+        "selfsigned,localca,tailscale,custom",
         GENMON_CONFIG,
         GENMON_SECTION,
         "cert_mode",
@@ -6343,11 +6343,228 @@ def generate_server_cert(ca_cert, ca_key, config_path):
 
 
 # -------------------------------------------------------------------------------
+def _get_tailscale_fqdn():
+    """Detect and return the Tailscale MagicDNS fully-qualified domain name (e.g. host.tailnet.ts.net)."""
+    import json
+    import shutil
+    import subprocess
+
+    ts_bin = shutil.which("tailscale")
+    if not ts_bin:
+        for p in ("/usr/bin/tailscale", "/usr/local/bin/tailscale", "/bin/tailscale"):
+            if os.path.isfile(p) and os.access(p, os.X_OK):
+                ts_bin = p
+                break
+    if not ts_bin:
+        return ""
+
+    try:
+        res = subprocess.run(
+            [ts_bin, "status", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if res.returncode == 0 and res.stdout:
+            data = json.loads(res.stdout)
+            self_node = data.get("Self", {})
+            dns_name = self_node.get("DNSName", "").rstrip(".")
+            if dns_name:
+                return dns_name
+            cert_domains = data.get("CertDomains", [])
+            if cert_domains:
+                return cert_domains[0].rstrip(".")
+    except Exception as e1:
+        LogDebug("Tailscale FQDN detection failed: " + str(e1))
+    return ""
+
+
+# -------------------------------------------------------------------------------
+def _ensure_tailscale_cert(config_path, force=False):
+    """Ensure a valid Tailscale Let's Encrypt certificate is present on disk.
+
+    Files: {config_path}/tailscale.crt, {config_path}/tailscale.key
+    Auto-renews if missing, force=True, or expiring within 30 days.
+    Returns (crt_path, key_path) or (None, None).
+    """
+    import datetime as _dt
+    import shutil
+    import subprocess
+    from cryptography import x509
+
+    crt_path = os.path.join(config_path, "tailscale.crt")
+    key_path = os.path.join(config_path, "tailscale.key")
+
+    ts_bin = shutil.which("tailscale")
+    if not ts_bin:
+        for p in ("/usr/bin/tailscale", "/usr/local/bin/tailscale", "/bin/tailscale"):
+            if os.path.isfile(p) and os.access(p, os.X_OK):
+                ts_bin = p
+                break
+    if not ts_bin:
+        LogError("Tailscale CLI not found in PATH or standard locations.")
+        return (crt_path, key_path) if (os.path.isfile(crt_path) and os.path.isfile(key_path)) else (None, None)
+
+    domain = _get_tailscale_fqdn()
+    if not domain:
+        LogError("Could not detect Tailscale domain (MagicDNS disabled or device not connected).")
+        return (crt_path, key_path) if (os.path.isfile(crt_path) and os.path.isfile(key_path)) else (None, None)
+
+    needs_fetch = force or not (os.path.isfile(crt_path) and os.path.isfile(key_path))
+    if not needs_fetch:
+        try:
+            with open(crt_path, "rb") as f:
+                cert = x509.load_pem_x509_certificate(f.read())
+            try:
+                expiry = cert.not_valid_after_utc
+                now_utc = _dt.datetime.now(_dt.timezone.utc)
+            except AttributeError:
+                expiry = cert.not_valid_after.replace(tzinfo=_dt.timezone.utc)
+                now_utc = _dt.datetime.now(_dt.timezone.utc)
+            if expiry - now_utc < _dt.timedelta(days=30):
+                LogDebug(f"Tailscale certificate for {domain} expiring in < 30 days ({expiry}), renewing.")
+                needs_fetch = True
+        except Exception as e1:
+            LogDebug("Error inspecting existing Tailscale cert, will refresh: " + str(e1))
+            needs_fetch = True
+
+    if needs_fetch:
+        try:
+            cmd = [ts_bin, "cert", "--cert-file", crt_path, "--key-file", key_path, domain]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if res.returncode != 0:
+                LogError(f"tailscale cert failed (code {res.returncode}): {res.stderr or res.stdout}")
+                return (crt_path, key_path) if (os.path.isfile(crt_path) and os.path.isfile(key_path)) else (None, None)
+            os.chmod(key_path, 0o600)
+            LogDebug(f"Tailscale certificate successfully obtained for {domain}: {crt_path}")
+        except Exception as e1:
+            LogErrorLine("Exception running tailscale cert: " + str(e1))
+            return (crt_path, key_path) if (os.path.isfile(crt_path) and os.path.isfile(key_path)) else (None, None)
+
+    return crt_path, key_path
+
+
+# -------------------------------------------------------------------------------
+def renew_or_regenerate_cert(force=False):
+    """Renew or regenerate the active certificate based on CertMode.
+
+    Returns (success: bool, message: str, info_dict: dict).
+    """
+    global CertMode, SSLContext
+    import json
+
+    mode = CertMode
+    success = False
+    message = ""
+
+    try:
+        if mode == "tailscale":
+            crt, key = _ensure_tailscale_cert(ConfigFilePath, force=force)
+            if crt and key and os.path.isfile(crt) and os.path.isfile(key):
+                success = True
+                message = "Tailscale certificate renewed successfully."
+            else:
+                success = False
+                message = "Failed to renew Tailscale certificate (check Tailscale connection & logs)."
+        elif mode == "localca":
+            ca_cert, ca_key = generate_local_ca(ConfigFilePath)
+            srv_key_path = os.path.join(ConfigFilePath, "server.key")
+            srv_crt_path = os.path.join(ConfigFilePath, "server.crt")
+            if force:
+                if os.path.isfile(srv_key_path):
+                    try:
+                        os.remove(srv_key_path)
+                    except Exception:
+                        pass
+                if os.path.isfile(srv_crt_path):
+                    try:
+                        os.remove(srv_crt_path)
+                    except Exception:
+                        pass
+            srv_crt, srv_key = generate_server_cert(ca_cert, ca_key, ConfigFilePath)
+            if srv_crt and srv_key and os.path.isfile(srv_crt) and os.path.isfile(srv_key):
+                success = True
+                message = "Local CA server certificate regenerated with updated SAN list."
+            else:
+                success = False
+                message = "Failed to regenerate Local CA certificate."
+        elif mode == "selfsigned":
+            key_path = os.path.join(ConfigFilePath, "selfsigned.key")
+            crt_path = os.path.join(ConfigFilePath, "selfsigned.crt")
+            if force:
+                if os.path.isfile(key_path):
+                    try:
+                        os.remove(key_path)
+                    except Exception:
+                        pass
+                if os.path.isfile(crt_path):
+                    try:
+                        os.remove(crt_path)
+                    except Exception:
+                        pass
+            ctx = generate_persistent_selfsigned(ConfigFilePath)
+            if ctx is not None or (os.path.isfile(key_path) and os.path.isfile(crt_path)):
+                success = True
+                message = "Persistent self-signed certificate regenerated."
+            else:
+                success = False
+                message = "Failed to regenerate self-signed certificate."
+        elif mode == "custom":
+            success = False
+            message = "Custom certificates are managed externally and cannot be auto-regenerated."
+        else:
+            success = False
+            message = f"Unknown certificate mode: {mode}"
+
+        info_json = _get_cert_info()
+        try:
+            info_dict = json.loads(info_json)
+        except Exception:
+            info_dict = {"mode": mode}
+
+        return success, message, info_dict
+    except Exception as e1:
+        LogErrorLine("Error in renew_or_regenerate_cert: " + str(e1))
+        return False, str(e1), {"mode": mode, "error": str(e1)}
+
+
+# -------------------------------------------------------------------------------
+CertWatchdogRunning = False
+CertWatchdogEvent = threading.Event()
+
+
+def _cert_renewal_watchdog_loop():
+    """Background watchdog thread that periodically checks for expiring certs and auto-renews them."""
+    LogDebug("Certificate renewal watchdog thread started.")
+    while not CertWatchdogEvent.is_set():
+        # Sleep for 12 hours between expiration checks
+        if CertWatchdogEvent.wait(timeout=43200):
+            break
+        try:
+            if bUseSecureHTTP and CertMode in ("tailscale", "localca"):
+                LogDebug("Certificate renewal watchdog: checking certificate expiration...")
+                success, msg, info = renew_or_regenerate_cert(force=False)
+                if success:
+                    LogDebug("Certificate renewal watchdog: " + str(msg))
+        except Exception as e1:
+            LogErrorLine("Certificate renewal watchdog error: " + str(e1))
+
+
+def StartCertRenewalWatchdog():
+    """Starts the background certificate renewal watchdog thread if not already running."""
+    global CertWatchdogRunning
+    if not CertWatchdogRunning:
+        CertWatchdogRunning = True
+        t = threading.Thread(target=_cert_renewal_watchdog_loop, name="CertWatchdog", daemon=True)
+        t.start()
+
+
+# -------------------------------------------------------------------------------
 def _get_cert_info():
     """Return a JSON string with certificate status info for the UI."""
     import json as _json
 
-    info = {"mode": CertMode}
+    info = {"mode": CertMode, "can_renew": CertMode in ("selfsigned", "localca", "tailscale")}
 
     def _load_cert(path):
         from cryptography import x509
@@ -6362,8 +6579,31 @@ def _get_cert_info():
         except Exception:
             return ""
 
+    def _issuer_cn(cert):
+        from cryptography.x509.oid import NameOID
+        try:
+            attrs = cert.issuer.get_attributes_for_oid(NameOID.COMMON_NAME)
+            if attrs:
+                return attrs[0].value
+            o_attrs = cert.issuer.get_attributes_for_oid(NameOID.ORGANIZATION_NAME)
+            if o_attrs:
+                return o_attrs[0].value
+            return ""
+        except Exception:
+            return ""
+
     def _date(dt):
         return dt.strftime("%Y-%m-%d") if dt is not None else ""
+
+    def _days_left(dt):
+        if dt is None:
+            return None
+        import datetime as _dt
+        now = _dt.datetime.now(_dt.timezone.utc)
+        if dt.tzinfo is None:
+            now = now.replace(tzinfo=None)
+        diff = dt - now
+        return max(0, diff.days)
 
     def _not_before(cert):
         try:
@@ -6395,7 +6635,16 @@ def _get_cert_info():
 
     try:
         if CertMode == "selfsigned":
-            info["detail"] = "Ephemeral \u2014 regenerated on each restart"
+            crt_path = os.path.join(ConfigFilePath, "selfsigned.crt")
+            if os.path.isfile(crt_path):
+                c = _load_cert(crt_path)
+                na = _not_after(c)
+                info["srv_expiry"] = _date(na)
+                info["days_remaining"] = _days_left(na)
+                san = _san_string(c)
+                if san:
+                    info["san"] = san
+            info["detail"] = "Self-Signed Certificate — regenerated on demand or restart"
         elif CertMode == "localca":
             ca_path = os.path.join(ConfigFilePath, "ca.crt")
             srv_path = os.path.join(ConfigFilePath, "server.crt")
@@ -6405,10 +6654,30 @@ def _get_cert_info():
                 info["ca_created"] = _date(_not_before(ca))
             if os.path.isfile(srv_path):
                 srv = _load_cert(srv_path)
-                info["srv_expiry"] = _date(_not_after(srv))
+                na = _not_after(srv)
+                info["srv_expiry"] = _date(na)
+                info["days_remaining"] = _days_left(na)
                 san = _san_string(srv)
                 if san:
                     info["san"] = san
+        elif CertMode == "tailscale":
+            ts_crt = os.path.join(ConfigFilePath, "tailscale.crt")
+            domain = _get_tailscale_fqdn()
+            if domain:
+                info["domain"] = domain
+            if os.path.isfile(ts_crt):
+                c = _load_cert(ts_crt)
+                na = _not_after(c)
+                info["srv_expiry"] = _date(na)
+                info["days_remaining"] = _days_left(na)
+                san = _san_string(c)
+                if san:
+                    info["san"] = san
+                iss = _issuer_cn(c)
+                if iss:
+                    info["issuer"] = iss
+            else:
+                info["detail"] = "Tailscale certificate will be fetched when HTTPS is enabled"
         elif CertMode == "custom":
             cert_file = ConfigFiles[GENMON_CONFIG].ReadValue("certfile") if GENMON_CONFIG in ConfigFiles else ""
             key_file = ConfigFiles[GENMON_CONFIG].ReadValue("keyfile") if GENMON_CONFIG in ConfigFiles else ""
@@ -6416,7 +6685,9 @@ def _get_cert_info():
             info["keyfile"] = key_file or ""
             if cert_file and os.path.isfile(cert_file):
                 c = _load_cert(cert_file)
-                info["expiry"] = _date(_not_after(c))
+                na = _not_after(c)
+                info["expiry"] = _date(na)
+                info["days_remaining"] = _days_left(na)
     except Exception as e1:
         info["error"] = str(e1)
     return _json.dumps(info)
@@ -6485,9 +6756,13 @@ def generate_persistent_selfsigned(config_path):
     Files: {config_path}/selfsigned.key, {config_path}/selfsigned.crt
     Returns an ssl.SSLContext, or None on failure.
     """
+    import datetime as _dt
     import ssl
 
-    from OpenSSL import crypto
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
 
     key_path = os.path.join(config_path, "selfsigned.key")
     crt_path = os.path.join(config_path, "selfsigned.crt")
@@ -6496,8 +6771,14 @@ def generate_persistent_selfsigned(config_path):
     if os.path.isfile(key_path) and os.path.isfile(crt_path):
         try:
             with open(crt_path, "rb") as f:
-                cert = crypto.load_certificate(crypto.FILETYPE_PEM, f.read())
-            if cert.has_expired():
+                cert = x509.load_pem_x509_certificate(f.read())
+            try:
+                expiry = cert.not_valid_after_utc
+                now_utc = _dt.datetime.now(_dt.timezone.utc)
+            except AttributeError:
+                expiry = cert.not_valid_after.replace(tzinfo=_dt.timezone.utc)
+                now_utc = _dt.datetime.now(_dt.timezone.utc)
+            if expiry < now_utc:
                 LogError("Self-signed certificate expired, regenerating.")
                 need_generate = True
             else:
@@ -6510,27 +6791,34 @@ def generate_persistent_selfsigned(config_path):
 
     if need_generate:
         try:
-            pkey = crypto.PKey()
-            pkey.generate_key(crypto.TYPE_RSA, 2048)
-
-            cert = crypto.X509()
-            cert.set_serial_number(int.from_bytes(os.urandom(16), "big"))
-            cert.gmtime_adj_notBefore(0)
-            cert.gmtime_adj_notAfter(60 * 60 * 24 * 365)  # 1 year
-
-            subject = cert.get_subject()
-            subject.CN = "*"
-            subject.O = "Genmon Self-Signed"
-
-            cert.set_issuer(subject)
-            cert.set_pubkey(pkey)
-            cert.sign(pkey, "sha256")
+            key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+            subject = issuer = x509.Name([
+                x509.NameAttribute(NameOID.COMMON_NAME, "*"),
+                x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Genmon Self-Signed"),
+            ])
+            now = _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
+            cert = (
+                x509.CertificateBuilder()
+                .subject_name(subject)
+                .issuer_name(issuer)
+                .public_key(key.public_key())
+                .serial_number(int.from_bytes(os.urandom(16), "big"))
+                .not_valid_before(now - _dt.timedelta(minutes=5))
+                .not_valid_after(now + _dt.timedelta(days=365))
+                .sign(private_key=key, algorithm=hashes.SHA256())
+            )
 
             with open(key_path, "wb") as f:
-                f.write(crypto.dump_privatekey(crypto.FILETYPE_PEM, pkey))
+                f.write(
+                    key.private_bytes(
+                        encoding=serialization.Encoding.PEM,
+                        format=serialization.PrivateFormat.TraditionalOpenSSL,
+                        encryption_algorithm=serialization.NoEncryption(),
+                    )
+                )
             os.chmod(key_path, 0o600)
             with open(crt_path, "wb") as f:
-                f.write(crypto.dump_certificate(crypto.FILETYPE_PEM, cert))
+                f.write(cert.public_bytes(serialization.Encoding.PEM))
 
             LogDebug("Persistent self-signed cert created: " + crt_path)
         except Exception as e1:
@@ -6802,7 +7090,7 @@ def LoadConfig():
                 CertMode = ConfigFiles[GENMON_CONFIG].ReadValue(
                     "cert_mode", default="selfsigned"
                 )
-                if CertMode not in ("selfsigned", "localca", "custom"):
+                if CertMode not in ("selfsigned", "localca", "tailscale", "custom"):
                     CertMode = "selfsigned"
 
             if CertMode == "selfsigned":
@@ -6820,6 +7108,23 @@ def LoadConfig():
                     SSLContext = (srv_crt, srv_key)
                 except Exception as e1:
                     LogErrorLine("Error setting up Local CA cert: " + str(e1))
+                    SSLContext = generate_adhoc_ssl_context()
+                    if SSLContext is None:
+                        SSLContext = "adhoc"
+            elif CertMode == "tailscale":
+                try:
+                    ts_crt, ts_key = _ensure_tailscale_cert(ConfigFilePath)
+                    if ts_crt and ts_key and CheckCertFiles(ts_crt, ts_key):
+                        SSLContext = (ts_crt, ts_key)
+                    else:
+                        LogError("Tailscale cert unavailable, falling back to self-signed")
+                        SSLContext = generate_persistent_selfsigned(ConfigFilePath)
+                        if SSLContext is None:
+                            SSLContext = generate_adhoc_ssl_context()
+                            if SSLContext is None:
+                                SSLContext = "adhoc"
+                except Exception as e1:
+                    LogErrorLine("Error setting up Tailscale cert: " + str(e1))
                     SSLContext = generate_adhoc_ssl_context()
                     if SSLContext is None:
                         SSLContext = "adhoc"
@@ -7452,6 +7757,35 @@ def webpush_test():
         return jsonify(status="error", message=str(e1)), 500
 
 
+@app.route("/api/security/cert/regenerate", methods=["POST"])
+def security_cert_regenerate():
+    try:
+        if not HasWriteAccess():
+            return jsonify(status="error", message="Unauthorized: Write access required"), 403
+        ok, msg, info = renew_or_regenerate_cert(force=True)
+        if not ok:
+            return jsonify(status="error", message=msg, cert_info=info), 400
+        return jsonify(status="ok", message=msg, cert_info=info)
+    except Exception as e1:
+        LogErrorLine("Error in security_cert_regenerate endpoint: " + str(e1))
+        return jsonify(status="error", message=str(e1)), 500
+
+
+@app.route("/api/security/cert/info", methods=["GET"])
+def security_cert_info_endpoint():
+    try:
+        import json as _json
+        info_str = _get_cert_info()
+        try:
+            info_obj = _json.loads(info_str)
+        except Exception:
+            info_obj = {"mode": CertMode, "raw": info_str}
+        return jsonify(status="ok", cert_info=info_obj)
+    except Exception as e1:
+        LogErrorLine("Error in security_cert_info endpoint: " + str(e1))
+        return jsonify(status="error", message=str(e1)), 500
+
+
 # ---------------------SetupMFA--------------------------------------------------
 def SetupMFA():
 
@@ -7711,9 +8045,11 @@ if __name__ == "__main__":
 
     CacheToolTips()
 
-    if bUseSecureHTTP and OldHTTPPort is not None and OldHTTPPort != HTTPPort:
-        t = threading.Thread(target=StartHTTPRedirectServer, daemon=True)
-        t.start()
+    if bUseSecureHTTP:
+        StartCertRenewalWatchdog()
+        if OldHTTPPort is not None and OldHTTPPort != HTTPPort:
+            t = threading.Thread(target=StartHTTPRedirectServer, daemon=True)
+            t.start()
 
     try:
         app.run(

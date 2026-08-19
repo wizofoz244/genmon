@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""Integration test suite for Flask Web API (genserv.py) endpoints."""
+"""Integration test suite for Flask Web API (genserv.py) endpoints.
 
-import json
+Validates Flask routing initialization, client command processing, and structured
+script log data responses per Google Python Style Guide.
+"""
+
+from __future__ import annotations
+
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -19,7 +24,10 @@ class TestGenservWebIntegration(unittest.TestCase):
     def test_cmd_endpoint_access_control(self) -> None:
         """Tests that genserv handles client command processing."""
         mock_client = MagicMock()
-        mock_client.GetStatus.return_value = {"Status": "Engine Ready", "Voltage": "240.0"}
+        mock_client.GetStatus.return_value = {
+            "Status": "Engine Ready",
+            "Voltage": "240.0",
+        }
 
         with patch.object(genserv, "ClientInterface", mock_client):
             with patch.object(genserv, "HasWriteAccess", return_value=True):
