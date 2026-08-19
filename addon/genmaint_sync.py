@@ -15,6 +15,7 @@ Google Python Style Guide compliant:
 
 import argparse
 import datetime
+import glob
 import json
 import logging
 import os
@@ -54,7 +55,7 @@ class GenMaintSync(MySupport):
         host: str = ProgramDefaults.LocalHost,
         port: int = ProgramDefaults.ServerPort,
         config_path: str = ProgramDefaults.ConfPath,
-        poll_interval: int = 60,
+        poll_interval: int = 300,
         oneshot: bool = False,
         dry_run: bool = False,
         log: Optional[Any] = None,
@@ -87,21 +88,42 @@ class GenMaintSync(MySupport):
             for h in self.log.handlers:
                 h.setFormatter(fmt)
         self.console = console or SetupLogger("genmaint_sync_console", "", stream=True)
+        self._ensure_formatter()
 
         self.running = True
         self.maintlog_file = os.path.join(self.config_path, "maintlog.json")
         self.state_file = os.path.join(self.config_path, "maint_sync_state.json")
         self.client: Optional[ClientInterface] = None
 
+    def _ensure_formatter(self) -> None:
+        """Enforces [YYYY-MM-DD HH:MM:SS] [LEVEL] formatting on all log handlers."""
+        fmt = logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+        if self.log:
+            for h in self.log.handlers:
+                h.setFormatter(fmt)
+        if self.console:
+            for h in self.console.handlers:
+                h.setFormatter(fmt)
+
     def log_info(self, msg: str) -> None:
         """Logs informational messages to both log file and console."""
+        self._ensure_formatter()
         if self.log:
             self.log.info(msg)
         if self.console:
             self.console.info(msg)
 
+    def log_warning(self, msg: str) -> None:
+        """Logs warning messages to both log file and console."""
+        self._ensure_formatter()
+        if self.log:
+            self.log.warning(msg)
+        if self.console:
+            self.console.warning(msg)
+
     def log_error(self, msg: str) -> None:
         """Logs error messages to both log file and console."""
+        self._ensure_formatter()
         if self.log:
             self.log.error(msg)
         if self.console:
@@ -245,6 +267,54 @@ class GenMaintSync(MySupport):
         except Exception as err:
             self.log_error(f"Error fetching logs via RPC: {err}")
             return None, None, None
+
+    def fetch_file_logs(self) -> Tuple[List[str], List[str], List[str]]:
+        """Scans local Genmon log files to backfill historical log entries.
+
+        Looks for genmon.log files in common paths (/etc/genmon/genmon.log,
+        /var/log/genmon.log, ./genmon.log, /home/genmonpi/genmon/genmon.log) and
+        rotated log files.
+
+        Returns:
+            Tuple of (alarm_log_lines, run_log_lines, service_log_lines).
+        """
+        alarm_lines: List[str] = []
+        run_lines: List[str] = []
+        service_lines: List[str] = []
+
+        log_paths = [
+            "/etc/genmon/genmon.log",
+            "/var/log/genmon.log",
+            "/home/genmonpi/genmon/genmon.log",
+            "./genmon.log",
+        ]
+        expanded_paths: List[str] = []
+        for p in log_paths:
+            expanded_paths.extend(glob.glob(f"{p}*"))
+
+        for path in set(expanded_paths):
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        line_str = line.strip()
+                        if not line_str:
+                            continue
+                        res = self.parse_log_line(line_str)
+                        if res:
+                            dt, desc = res
+                            desc_lower = desc.lower()
+                            if any(k in desc_lower for k in ["alarm", "warning", "fault"]):
+                                alarm_lines.append(line_str)
+                            elif any(k in desc_lower for k in ["exercising", "running", "utility loss", "manual", "ready to run", "stopped", "switched off"]):
+                                run_lines.append(line_str)
+                            elif any(k in desc_lower for k in ["service", "maintenance"]):
+                                service_lines.append(line_str)
+            except Exception as err:
+                self.log_error(f"Error reading historical log file {path}: {err}")
+
+        return alarm_lines, run_lines, service_lines
 
     def fetch_live_run_hours(self) -> float:
         """Fetches the current live engine run hours from Genmon RPC.
@@ -451,8 +521,21 @@ class GenMaintSync(MySupport):
             Count of new or updated entries in maintlog.json.
         """
         alarm_lines, run_lines, service_lines = self.fetch_controller_logs()
-        if alarm_lines is None and run_lines is None and service_lines is None:
-            self.log_info("Unable to fetch logs from controller. Skipping sync pass.")
+        if alarm_lines is None:
+            alarm_lines = []
+        if run_lines is None:
+            run_lines = []
+        if service_lines is None:
+            service_lines = []
+
+        # Merge with historical log files for complete log backfilling
+        file_alarm, file_run, file_service = self.fetch_file_logs()
+        alarm_lines = list(set(alarm_lines + file_alarm))
+        run_lines = list(set(run_lines + file_run))
+        service_lines = list(set(service_lines + file_service))
+
+        if not alarm_lines and not run_lines and not service_lines:
+            self.log_info("No log entries retrieved from controller or log files. Skipping sync pass.")
             return 0
 
         live_hrs = self.fetch_live_run_hours()
@@ -613,7 +696,7 @@ def main() -> None:
         "-c", "--configpath", default=ProgramDefaults.ConfPath, help="Path to Genmon configuration folder."
     )
     parser.add_argument(
-        "-i", "--interval", type=int, default=60, help="Polling interval in seconds for daemon mode."
+        "-i", "--interval", type=int, default=300, help="Polling interval in seconds for daemon mode (default: 300s / 5 mins)."
     )
     parser.add_argument(
         "-1", "--oneshot", action="store_true", help="Perform a single synchronization pass and exit."

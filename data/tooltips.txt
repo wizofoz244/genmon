@@ -12,6 +12,7 @@ imap_server = Server address used for receiving email, leave empty to disable IM
 smtp_port = SMTP port used on the SMTP server for sending email. Typically port 587 is used for TLS and port 465 is used for SSL
 ssl_enabled = Use SSL encryption to send emails
 tls_disable = If SSL is disabled TLS encryption is the default, unless this is enabled. If enabled and SSL is disabled, no encryption will be used to send email.
+use_html = Send a structured HTML alternative (in addition to plain text) so screen readers get clear pauses between status lines.
 smtpauth_disable = If enabled, ignore SMTP authentication. Typically only used for locally administered SMTP servers
 sitename = Site Name
 port = Serial device name of your serial port. Normally  /dev/serial0 or /dev/ttyAMA0 for onboard Raspberry Pi Serial ports
@@ -48,6 +49,7 @@ http_user_ro = Sets the username of the limited rights user. Leave blank to disa
 http_pass_ro = Sets the password of the limited rights user. Leave blank to disable. 'Use Secure Web Settings' and full rights user must be enabled to use this feature.
 http_port = HTTP port to be used by the web server.
 https_port = Port to override the secure web server port (https). The default value is 443.
+allow_iframe = SECURITY RISK - keep this OFF unless you understand the risks. Off (default, recommended) blocks all iframe embedding for the web interface, which protects against clickjacking. Turning it On lets ANY website embed the genmon web page in an iframe, which can be abused to trick you into clicking controls. Only enable it if you are embedding genmon in your own trusted dashboard (e.g. Home Assistant) on a network you control.
 favicon = favicon for website. This is an optional parameter and default is "favicon.ico". This may not work in older browsers
 system_theme = Use the browser-provided light/dark theme setting in the UI, and remove the manual theme switcher. This may not work in older brwsers
 usemfa = Use Multi-Factor Authentication. You must use a Multi-Factor Authenticator app like Google Authenticator or Authy to use this feature. If enabled, MFA will apply to both normal and limited rights login.
@@ -203,14 +205,34 @@ show_hours_activation=Enable to show Time Since Activation as hours, disable to 
 0009=Utility Voltage
 05f1=Last Alarm Code (Evo)
 01f4=Serial Number
+0637=Power Zone 200 Alarm active flag
+0638=Power Zone 200 Warning active flag
+0639=Power Zone 200 Maintenance active flag
+063a=Power Zone 200 Single phase flag
+07e6=Firmware Build Major
+07e7=Firmware Build Minor
 1f72=Power Zone 200 L1 Volts
 1f73=Power Zone 200 L2 Volts
 1f74=Power Zone 200 L3 Volts
-1f75=Power Zone 200 L1 Amps, divide by 100
-1f76=Power Zone 200 L2 Amps, divide by 100
-1f77=Power Zone 200 L3 Amps, divide by 100
+1f75=Power Zone 200 L1 Amps
+1f76=Power Zone 200 L2 Amps
+1f77=Power Zone 200 L3 Amps
 1f7b=Power Zone 200 Power Factor
 1f7c=Power Zone 200 Totak kw hours
+1fa4=Power Zone 200 Utility volts L1
+1fa5=Power Zone 200 Utility volts L2
+1fa6=Power Zone 200 Utility volts L2
+2134=Power Zone 200 Real Power kW
+2135=Power Zone 200 Reactive Power kW
+2136=Power Zone 200 Apparant Power kW
+2137=Power Zone 200 Last Run Minutes (duration of the last generator run in minutes)
+2138=Power Zone 200 Last Run kWH (last generator run in kWH)
+2166=Power Zone 200 Transfer switch active = 1
+0608=Power Zone 200 Engine intake/throttle temperature
+060c=Power Zone 200 Engine percent torque / engine load
+0613=Power Zone 200 Fuel pressure, cranking
+0614=Power Zone 200 Fuel pressure, running
+2008=Power Zone 200 Oil level
 
 [h_100]
 0080=Input 1
@@ -350,7 +372,7 @@ show_hours_activation=Enable to show Time Since Activation as hours, disable to 
 0ebf=External Switch SW Version
 0ec0=External Switch Selected
 
-[powerzone]
+[powerzone_pro]
 0000 = RA Status 0
 0001 = RA Status 1
 0002 = RA Status 2

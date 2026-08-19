@@ -55,6 +55,8 @@ The software supports the following features:
     - Switch state change
     - Critical or Warning messages from the generator
 - Web based application for viewing status of the generator
+- Native PWA Web Push Notifications with RFC 8292 VAPID encryption (lockscreen alerts on iOS, Android, macOS, Windows without third-party SaaS accounts)
+- Process and daemon status verification tool (`./startgenmon.sh status` with ANSI traffic light status indicators)
 - Limited and Full Rights login for web interface
 - SMS notifications of Generator state and power outages (via Twilio SMS API or Expansion Cellular Modem)
 - Push notifications (via pushover.net, slack)
@@ -100,6 +102,8 @@ If you have a large generator, the placement of your Raspberry Pi could be impor
 ## Connectivity
 This application was written to be agnostic of the underlying network media (i.e. WiFi, Ethernet, etc). Testing and development was performed with WiFi with access points connected to an uninterruptible power supply (UPS) so connectivity is not lost when power is transferred from utility to the generator.
 
+For automated network recovery and auto-reboot resilience during router/AP disconnects, see the included `net_watchdog.sh` script and [Section 10 of the Deployment Guide](DEPLOYMENT_GUIDE.md#10-automated-network-watchdog--auto-reboot-net_watchdogsh).
+
 **Note:** It is not recommended to expose the web interface used with this project to the internet without serious thought regarding security. If you want to access genmon remotely I would recommend using a VPN (Virtual Private Network) to access your private network. Genmon uses the python Flask library's internal web server to display web pages for this project. This is suitable for low traffic situations however it is not a good idea to expose this interface to the internet unprotected. Protecting from unwanted access using a username and password is available in this project, however there is still risk involved as the Flask web server is not intended for high traffic situations and would likely fail with a Denial of Service attack.  Raspberry pi's in general are not hardened by default like most public facing web servers. Exposing any computer to the internet has similar security issues that would need to be considered. There [have been instances](https://github.com/jgyates/genmon/issues/702) where hacking has occurred. ***Exposing genmon directly to the internet is not recommended***.
 ## Controller Selection
 Gemmon supports several type of generator controllers. The following table shows each controller supported and how to configure genmon to support each controller.
@@ -144,3 +148,5 @@ alt="Genmon Demo" width="240" height="180" border="10" /></a>
 
 # Documentation
 * [Genmon Project Wiki](https://github.com/jgyates/genmon/wiki)
+* [PWA Web Push Architecture & Walkthrough Guide](walkthrough.md)
+* [Complete Setup, Backup & Deployment Guide](DEPLOYMENT_GUIDE.md)

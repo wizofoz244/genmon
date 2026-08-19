@@ -1221,6 +1221,8 @@ class HPanel(GeneratorController):
                 RegisterStringEnum.CONTROLLER_NAME[REGISTER],
                 RegisterStringEnum.CONTROLLER_NAME[LENGTH] // 2,
             )
+            self.DelayBetweenFrames()
+            
 
             if not len(ControllerString):
                 self.LogError("Unable to ID controller, possibly not receiving data.")
@@ -1654,6 +1656,7 @@ class HPanel(GeneratorController):
                     self.ModBus.ProcessTransaction(
                         RegisterList[REGISTER], RegisterList[LENGTH] // 2
                     )
+                    self.DelayBetweenFrames()
                     if (
                         localSyncError != self.ModBus.ComSyncError
                         or localTimeoutCount != self.ModBus.ComTimoutError
@@ -1683,6 +1686,7 @@ class HPanel(GeneratorController):
                     self.ModBus.ProcessTransaction(
                         RegisterList[REGISTER], RegisterList[LENGTH] // 2
                     )
+                    self.DelayBetweenFrames()
                     if (
                         localSyncError != self.ModBus.ComSyncError
                         or localTimeoutCount != self.ModBus.ComTimoutError
@@ -3768,20 +3772,20 @@ class HPanel(GeneratorController):
 
             if self.SystemInAlarm():
                 return "ALARM"
-            elif ServiceDue:
-                return "SERVICEDUE"
             elif IsExercising:
                 return "EXERCISING"
             elif IsRunning and SwitchState == "auto":
                 return "RUNNING"
             elif IsRunning and SwitchState == "manual":
                 return "RUNNING-MANUAL"
-            elif SwitchState == "manual":
-                return "MANUAL"
-            elif SwitchState == "auto":
-                return "READY"
             elif SwitchState == "off":
                 return "OFF"
+            elif SwitchState == "manual":
+                return "MANUAL"
+            elif ServiceDue:
+                return "SERVICEDUE"
+            elif SwitchState == "auto":
+                return "READY"
             else:
                 self.FeedbackPipe.SendFeedback(
                     "Base State",

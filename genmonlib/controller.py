@@ -18,6 +18,7 @@ import datetime
 import json
 import os
 import sys
+import tempfile
 import threading
 import time
 import itertools
@@ -617,14 +618,7 @@ class GeneratorController(MySupport):
             return
         time.sleep(0.25)
 
-        if (
-            not self.ControllerSelected == None
-            or not len(self.ControllerSelected)
-            or self.ControllerSelected == "generac_evo_nexus"
-        ):
-            MaxReg = 0x400
-        else:
-            MaxReg = 0x2000
+        MaxReg = 0x3000
         self.InitCompleteEvent.wait()
 
         if self.IsStopping:
@@ -683,7 +677,7 @@ class GeneratorController(MySupport):
                                 self.GetEngineState(),
                             )
                         )
-                        RegistersUnderTest[Register] = Value  # update the value
+                        RegistersUnderTest[Register] = NewValue  # update the value
 
                 msgbody = "\n"
                 try:
@@ -2758,6 +2752,7 @@ class GeneratorController(MySupport):
                         type=type,
                         callback=self.Platform.GetWiFiSignalStrength,
                         callbackparameters=(True,False,self.bWifiIsPercent),
+                        extra_callback=self.Platform.GetWiFiBand,
                     )
                     self.TileList.append(Tile)
 
@@ -3812,9 +3807,13 @@ class GeneratorController(MySupport):
                 if not self.ValidateMaintLogEntry(Entry):
                     return "Invalid maintenance log entry"
                 self.MaintLogList.append(Entry)
-                with open(self.MaintLog, "w") as outfile:
-                    json.dump(self.MaintLogList, outfile, sort_keys=True, indent=4)  
-                    outfile.flush()
+                dir_name = os.path.dirname(self.MaintLog) or "."
+                with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False, encoding="utf-8") as tf:
+                    json.dump(self.MaintLogList, tf, sort_keys=True, indent=4)
+                    tf.flush()
+                    os.fsync(tf.fileno())
+                    temp_name = tf.name
+                os.replace(temp_name, self.MaintLog)
             except Exception as e1:
                 self.LogErrorLine("Error in AddEntryToMaintLog: " + str(e1))
                 return "Invalid input for Maintenance Log entry (2)."
@@ -3939,11 +3938,13 @@ class GeneratorController(MySupport):
     def SaveMaintLog(self, NewLog):
         try:
             self.MaintLogList = NewLog
-            with open(self.MaintLog, "w") as outfile:
-                json.dump(
-                    self.MaintLogList, outfile, sort_keys=True, indent=4
-                )  # , ensure_ascii = False)
-                outfile.flush()
+            dir_name = os.path.dirname(self.MaintLog) or "."
+            with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False, encoding="utf-8") as tf:
+                json.dump(self.MaintLogList, tf, sort_keys=True, indent=4)
+                tf.flush()
+                os.fsync(tf.fileno())
+                temp_name = tf.name
+            os.replace(temp_name, self.MaintLog)
 
         except Exception as e1:
             self.LogErrorLine("Error in SaveMaintLog: " + str(e1))
