@@ -5177,7 +5177,11 @@ class Evolution(GeneratorController):
 
         EngineValue = self.GetEngineState()
         SwitchValue = self.GetSwitchState()
-        if "exercising" in EngineValue.lower():
+        if (
+            "exercising" in EngineValue.lower()
+            or "exercise" in EngineValue.lower()
+            or "quiettest" in EngineValue.lower()
+        ):
             return "EXERCISING"
         elif "running" in EngineValue.lower():
             if "auto" in SwitchValue.lower():
