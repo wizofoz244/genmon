@@ -1125,13 +1125,30 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    (log, console, config, ConfigFilePath) = MySupport.SetupAddOnProgram(
-        "genwebpush"
+    (
+        console,
+        ConfigFilePath,
+        address,
+        port,
+        loglocation,
+        log,
+    ) = MySupport.SetupAddOnProgram("genwebpush")
+
+    config = MyConfig(
+        filename=os.path.join(ConfigFilePath, "genwebpush.conf"),
+        section="genwebpush",
+        log=log,
     )
+
     LoadSubscriptions()
     EnsureVapidKeys()
 
     notify = GenNotify(
+        host=address,
+        port=port,
+        log=log,
+        loglocation=loglocation,
+        console=console,
         config=config,
         onready=None,
         onexercise=OnExercise,
