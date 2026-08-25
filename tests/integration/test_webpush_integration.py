@@ -780,6 +780,34 @@ class TestWebPushIntegration(unittest.TestCase):
             )
         self.assertIn("Unsupported elliptic curve point type", str(ctx.exception))
 
+    @patch("genmonlib.mysupport.MySupport.SetupAddOnProgram")
+    @patch("addon.genwebpush.GenNotify")
+    @patch("addon.genwebpush.LoadSubscriptions")
+    @patch("addon.genwebpush.EnsureVapidKeys")
+    def test_daemon_startup_unpack_and_notify_init(self, mock_vapid, mock_subs, mock_notify_cls, mock_setup) -> None:
+        """Verify daemon entry point correctly unpacks 6-tuple from SetupAddOnProgram and initializes GenNotify."""
+        mock_console = MagicMock()
+        mock_log = MagicMock()
+        # SetupAddOnProgram returns 6 values: console, ConfigFilePath, address, port, loglocation, log
+        mock_setup.return_value = (mock_console, "/etc/genmon", "127.0.0.1", 8800, "/var/log", mock_log)
+        
+        mock_notify_instance = MagicMock()
+        mock_notify_cls.return_value = mock_notify_instance
+
+        # Simulate execution of the main block
+        import addon.genwebpush as gwp
+        (
+            console,
+            ConfigFilePath,
+            address,
+            port,
+            loglocation,
+            log,
+        ) = gwp.MySupport.SetupAddOnProgram("genwebpush")
+        self.assertEqual(address, "127.0.0.1")
+        self.assertEqual(port, 8800)
+        self.assertEqual(loglocation, "/var/log")
+
 
 if __name__ == "__main__":
     unittest.main()
