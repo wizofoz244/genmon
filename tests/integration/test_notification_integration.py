@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
-"""Integration test suite for GenNotify and event message pipeline."""
+"""Integration test suite for GenNotify and event message pipeline.
 
+Validates event handler registration, outage tracking state, and event dispatcher
+configuration per Google Python Style Guide.
+"""
+
+from __future__ import annotations
+
+from typing import Any
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -12,7 +19,8 @@ class TestNotificationIntegration(unittest.TestCase):
     """Integration tests for event notification dispatcher in mynotify.py."""
 
     @patch("genmonlib.mynotify.ClientInterface")
-    def setUp(self, mock_client_cls) -> None:
+    def setUp(self, mock_client_cls: Any) -> None:
+        """Sets up mock event callbacks and GenNotify instance."""
         self.log = MagicMock()
         self.ready_callback = MagicMock()
         self.alarm_callback = MagicMock()

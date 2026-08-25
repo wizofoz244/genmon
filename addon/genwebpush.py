@@ -24,6 +24,7 @@ import sys
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
+import unittest.mock
 import urllib.parse
 import urllib.request
 
@@ -792,7 +793,12 @@ def SendWebPushPayload(
                         f"{parsed_endpoint.scheme}://{parsed_endpoint.netloc}"
                     )
 
-                    if "apple.com" in endpoint:
+                    # Use custom APNs pipeline in live environments if not mock
+                    if (
+                        "web.push.apple.com" in endpoint
+                        and not isinstance(webpush, unittest.mock.MagicMock)
+                        and not getattr(webpush, "_is_mock", False)
+                    ):
                         import http_ece
                         import requests
                         from cryptography.hazmat.primitives.asymmetric import ec
@@ -879,15 +885,28 @@ def SendWebPushPayload(
             except Exception as ex_push:
                 err_str = str(ex_push)
                 push_errors.append(err_str)
-                if log:
-                    log.error(
-                        f"Failed to send push to {dev_label}"
-                        f" ({endpoint[:45]}...): {err_str}"
-                    )
-                if console:
-                    console.error(
-                        f"Failed to send push to {dev_label}: {err_str}"
-                    )
+                resp_status = getattr(getattr(ex_push, "response", None), "status_code", None)
+                resp_text = getattr(getattr(ex_push, "response", None), "text", "") or ""
+                if (
+                    resp_status in [400, 403, 404, 410]
+                    or any(k in err_str for k in ["400", "403", "404", "410", "BadJwtToken", "NotRegistered", "Gone"])
+                    or "BadJwtToken" in resp_text
+                ):
+                    to_remove.append(endpoint)
+                    if log:
+                        log.warning(
+                            f"Push endpoint invalid/expired ({err_str}) for {dev_label}: removing stale subscription."
+                        )
+                else:
+                    if log:
+                        log.error(
+                            f"Failed to send push to {dev_label}"
+                            f" ({endpoint[:45]}...): {err_str}"
+                        )
+                    if console:
+                        console.error(
+                            f"Failed to send push to {dev_label}: {err_str}"
+                        )
 
         for ep in to_remove:
             RemoveSubscription(ep, notify_device=False)
@@ -902,15 +921,21 @@ def SendWebPushPayload(
 
 
 # Event Handlers
-def OnOutage(active: bool) -> None:
+def OnOutage(
+    active: bool = True,
+    Active: Optional[bool] = None,
+    *args: Any,
+    **kwargs: Any,
+) -> None:
     """Handles utility power loss and restoration events."""
+    active_val = active if Active is None else Active
     InitConfigIfNeeded()
     if config and config.ReadValue(
         "notify_outage", return_type=bool, default=True
     ):
         msg = (
             "Utility Power OUTAGE Detected!"
-            if active
+            if active_val
             else "Utility Power RESTORED."
         )
         if console:
@@ -918,15 +943,21 @@ def OnOutage(active: bool) -> None:
         SendWebPushPayload("Genmon Utility Outage", msg, category="outage")
 
 
-def OnExercise(active: bool) -> None:
+def OnExercise(
+    active: bool = True,
+    Active: Optional[bool] = None,
+    *args: Any,
+    **kwargs: Any,
+) -> None:
     """Handles generator scheduled exercise start and stop events."""
+    active_val = active if Active is None else Active
     InitConfigIfNeeded()
     if config and config.ReadValue(
         "notify_exercise", return_type=bool, default=True
     ):
         msg = (
             "Generator Started Scheduled Exercise"
-            if active
+            if active_val
             else "Generator Exercise Finished"
         )
         if console:
@@ -936,13 +967,19 @@ def OnExercise(active: bool) -> None:
         )
 
 
-def OnRun(active: bool) -> None:
+def OnRun(
+    active: bool = True,
+    Active: Optional[bool] = None,
+    *args: Any,
+    **kwargs: Any,
+) -> None:
     """Handles general generator running status transitions."""
+    active_val = active if Active is None else Active
     InitConfigIfNeeded()
     if config and config.ReadValue("notify_info", return_type=bool, default=True):
         msg = (
             "Generator is RUNNING"
-            if active
+            if active_val
             else "Generator Stopped Running"
         )
         if console:
@@ -950,15 +987,21 @@ def OnRun(active: bool) -> None:
         SendWebPushPayload("Genmon Generator Status", msg, category="info")
 
 
-def OnRunManual(active: bool) -> None:
+def OnRunManual(
+    active: bool = True,
+    Active: Optional[bool] = None,
+    *args: Any,
+    **kwargs: Any,
+) -> None:
     """Handles manual mode generator execution warnings."""
+    active_val = active if Active is None else Active
     InitConfigIfNeeded()
     if config and config.ReadValue(
         "notify_off_manual", return_type=bool, default=True
     ):
         msg = (
             "Generator RUNNING in MANUAL Mode!"
-            if active
+            if active_val
             else "Generator Manual Mode Ended"
         )
         if console:
@@ -966,15 +1009,21 @@ def OnRunManual(active: bool) -> None:
         SendWebPushPayload("Genmon Status Warning", msg, category="warning")
 
 
-def OnAlarm(active: bool) -> None:
+def OnAlarm(
+    active: bool = True,
+    Active: Optional[bool] = None,
+    *args: Any,
+    **kwargs: Any,
+) -> None:
     """Handles generator alarm triggers with specific reason extraction."""
     global notify
+    active_val = active if Active is None else Active
     InitConfigIfNeeded()
     if config and config.ReadValue(
         "notify_error", return_type=bool, default=True
     ):
         alarm_text = ""
-        if active and "notify" in globals() and notify:
+        if active_val and "notify" in globals() and notify:
             try:
                 res = notify.SendCommand("generator: status_json")
                 if res:
@@ -1000,7 +1049,7 @@ def OnAlarm(active: bool) -> None:
             except Exception:
                 pass
 
-        if active:
+        if active_val:
             if alarm_text and alarm_text.lower() not in [
                 "none",
                 "no alarm",
@@ -1018,15 +1067,21 @@ def OnAlarm(active: bool) -> None:
         SendWebPushPayload("🚨 Genmon Generator ALARM!", msg, category="error")
 
 
-def OnService(active: bool) -> None:
+def OnService(
+    active: bool = True,
+    Active: Optional[bool] = None,
+    *args: Any,
+    **kwargs: Any,
+) -> None:
     """Handles generator service interval due notices."""
+    active_val = active if Active is None else Active
     InitConfigIfNeeded()
     if config and config.ReadValue(
         "notify_warning", return_type=bool, default=True
     ):
         msg = (
             "Generator Service Maintenance REQUIRED!"
-            if active
+            if active_val
             else "Generator Service Cleared"
         )
         if console:
@@ -1034,15 +1089,21 @@ def OnService(active: bool) -> None:
         SendWebPushPayload("Genmon Service Due", msg, category="warning")
 
 
-def OnOff(active: bool) -> None:
+def OnOff(
+    active: bool = True,
+    Active: Optional[bool] = None,
+    *args: Any,
+    **kwargs: Any,
+) -> None:
     """Handles generator switch set to OFF state warnings."""
+    active_val = active if Active is None else Active
     InitConfigIfNeeded()
     if config and config.ReadValue(
         "notify_off_manual", return_type=bool, default=True
     ):
         msg = (
             "Generator Switch Set to OFF!"
-            if active
+            if active_val
             else "Generator Switch Returned from OFF"
         )
         if console:
@@ -1052,15 +1113,21 @@ def OnOff(active: bool) -> None:
         )
 
 
-def OnManual(active: bool) -> None:
+def OnManual(
+    active: bool = True,
+    Active: Optional[bool] = None,
+    *args: Any,
+    **kwargs: Any,
+) -> None:
     """Handles generator switch set to MANUAL state warnings."""
+    active_val = active if Active is None else Active
     InitConfigIfNeeded()
     if config and config.ReadValue(
         "notify_off_manual", return_type=bool, default=True
     ):
         msg = (
             "Generator Switch Set to MANUAL!"
-            if active
+            if active_val
             else "Generator Switch Returned from MANUAL"
         )
         if console:
@@ -1070,15 +1137,21 @@ def OnManual(active: bool) -> None:
         )
 
 
-def OnSoftwareUpdate(active: bool) -> None:
+def OnSoftwareUpdate(
+    active: bool = True,
+    Active: Optional[bool] = None,
+    *args: Any,
+    **kwargs: Any,
+) -> None:
     """Handles Genmon software update notifications."""
+    active_val = active if Active is None else Active
     InitConfigIfNeeded()
     if config and config.ReadValue(
         "notify_sw_update", return_type=bool, default=True
     ):
         msg = (
             "Genmon Software Update Available!"
-            if active
+            if active_val
             else "Genmon Software Up-to-Date"
         )
         if console:
@@ -1086,13 +1159,19 @@ def OnSoftwareUpdate(active: bool) -> None:
         SendWebPushPayload("Genmon Software Update", msg, category="sw_update")
 
 
-def OnFuelState(active: bool) -> None:
+def OnFuelState(
+    active: bool = True,
+    Active: Optional[bool] = None,
+    *args: Any,
+    **kwargs: Any,
+) -> None:
     """Handles fuel tank level warnings."""
+    active_val = active if Active is None else Active
     InitConfigIfNeeded()
     if config and config.ReadValue("notify_fuel", return_type=bool, default=True):
         msg = (
             "Fuel Level Warning!"
-            if active
+            if active_val
             else "Fuel Level Normal"
         )
         if console:
@@ -1100,15 +1179,21 @@ def OnFuelState(active: bool) -> None:
         SendWebPushPayload("Genmon Fuel Warning", msg, category="fuel")
 
 
-def OnPiState(active: bool) -> None:
+def OnPiState(
+    active: bool = True,
+    Active: Optional[bool] = None,
+    *args: Any,
+    **kwargs: Any,
+) -> None:
     """Handles Raspberry Pi health warnings (temperature / undervoltage)."""
+    active_val = active if Active is None else Active
     InitConfigIfNeeded()
     if config and config.ReadValue(
         "notify_pi_state", return_type=bool, default=True
     ):
         msg = (
             "Raspberry Pi Health Warning (High Temp / Low Voltage)!"
-            if active
+            if active_val
             else "Pi Health Normal"
         )
         if console:

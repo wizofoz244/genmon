@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Integration test suite for Modbus simulation and controller data parsing."""
+"""Integration test suite for Modbus simulation and controller data parsing.
+
+Validates end-to-end data pipeline: Modbus JSON file parsing -> Evolution controller
+metrics calculation -> MyTile GUI status generation per Google Python Style Guide.
+"""
+
+from __future__ import annotations
 
 import json
 import os
@@ -17,6 +23,7 @@ class TestModbusControllerIntegration(unittest.TestCase):
     """Integration tests between Modbus register simulation and Generac Evolution Controller state."""
 
     def setUp(self) -> None:
+        """Sets up mock logger and temporary Modbus JSON input data."""
         self.log = MagicMock()
         self.test_data = {
             "Registers": {
@@ -29,18 +36,19 @@ class TestModbusControllerIntegration(unittest.TestCase):
                 "0052": "0000",  # Digital Inputs
                 "0053": "0001",  # Digital Outputs
             },
-            "Strings": {
-                "01f4": "3001234567"  # Serial Number
-            },
+            "Strings": {"01f4": "3001234567"},  # Serial Number
             "FileData": {},
             "Coils": {},
             "Inputs": {},
         }
-        self.temp_file = tempfile.NamedTemporaryFile("w", delete=False, suffix=".json")
+        self.temp_file = tempfile.NamedTemporaryFile(
+            "w", delete=False, suffix=".json"
+        )
         json.dump(self.test_data, self.temp_file)
         self.temp_file.close()
 
     def tearDown(self) -> None:
+        """Cleans up temporary test files."""
         if os.path.exists(self.temp_file.name):
             os.remove(self.temp_file.name)
 
@@ -56,11 +64,15 @@ class TestModbusControllerIntegration(unittest.TestCase):
         self.assertEqual(modbus_sim.Strings.get("01f4"), "3001234567")
 
     @patch("genmonlib.myclient.ClientInterface")
-    def test_controller_simulation_tile_integration(self, mock_client_cls) -> None:
+    def test_controller_simulation_tile_integration(
+        self, mock_client_cls: Any
+    ) -> None:
         """Tests that Evolution controller initialized with ModbusFile returns correct tile data."""
         mock_config = MagicMock()
         mock_config.HasOption.return_value = False
-        mock_config.ReadValue.side_effect = lambda key, **kwargs: kwargs.get("default", None)
+        mock_config.ReadValue.side_effect = (
+            lambda key, **kwargs: kwargs.get("default", None)
+        )
 
         evolution = Evolution(
             log=self.log,
