@@ -53,6 +53,11 @@ class MyConfig(MyCommon):
             return
         self.InitComplete = True
 
+    # ---------------------MyConfig::HasSection----------------------------------
+    def HasSection(self, Section):
+
+        return self.config.has_section(Section)
+
     # ---------------------MyConfig::HasOption-----------------------------------
     def HasOption(self, Entry):
 

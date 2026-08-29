@@ -947,8 +947,10 @@ class Loader(MySupport):
                     enable="True",
                 )
                 self.LogError("Added missing genwebpush entry to genloader.conf")
-            elif not self.config.HasOption("enable"):
-                self.config.WriteValue("enable", "True", section="genwebpush")
+            else:
+                self.config.SetSection("genwebpush")
+                if not self.config.HasOption("enable"):
+                    self.config.WriteValue("enable", "True", section="genwebpush")
 
             # check version info
             self.config.SetSection("genloader")
