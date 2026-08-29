@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 - **PWA Web Push Notifications (`addon/genwebpush.py`)**: Added native Web Push alerts supporting RFC 8292 VAPID encryption, Apple APNs / Safari PWA support on iOS and macOS, custom device labeling, and specific alarm reason extraction.
 - **Wi-Fi Band Detection**: Added operating frequency band detection (2.4 GHz / 5 GHz / 6 GHz) on dashboard signal tile and platform diagnostics.
 - **Script Logs Viewer & Dashboard Tile**: Added dedicated Script Logs page (`/#/logs`), live error/warning badge highlighting, error acknowledgment, and dashboard tile navigation.
+- **Background Services Live Dashboard Tile**: Added real-time dashboard status tile for background services and daemons (matching `startgenmon.sh status`), live process inspect modal with CPU/memory/PID details, Tailscale Funnel connectivity status, and service restart action.
 - **Manual Backups Web Console**: Live streaming execution console for Daily Genmon Backups and Weekly SD Card Image routines directly from the web interface.
 - **Web UI Session Security**: Added global "Logout All Devices" session revocation, secure cookie clearing on logout, Passkey / WebAuthn, and MFA backup codes.
 - **Automated Test Suite**: Added 57 unit and integration tests across `tests/unit/` and `tests/integration/` with GitHub Actions CI automation.
