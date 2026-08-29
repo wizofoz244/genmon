@@ -1125,6 +1125,173 @@ def clear_script_log_json(log_type):
 
 
 # -------------------------------------------------------------------------------
+# Background Services Process Monitor
+# -------------------------------------------------------------------------------
+def get_services_status_json():
+    """Returns real-time status of Genmon background processes and daemons.
+
+    Inspects process table for core services (genmon.py, genserv.py) and
+    addons (genwebpush.py, genpushover.py, genmqtt.py, gengpio.py, etc.),
+    cross-referencing with genloader.conf to report accurate running/failed/inactive
+    states, along with Tailscale Funnel status.
+    """
+    known_services = [
+        {"name": "genmon.py", "title": "Genmon Core", "desc": "Generator Controller Engine", "is_core": True, "section": "genmon"},
+        {"name": "genserv.py", "title": "Web Server", "desc": "Web UI & REST API Server", "is_core": True, "section": "genserv"},
+        {"name": "genwebpush.py", "title": "Web Push (PWA)", "desc": "PWA Push Notification Daemon", "is_core": False, "section": "genwebpush"},
+        {"name": "genpushover.py", "title": "Pushover", "desc": "Pushover Push Notification Addon", "is_core": False, "section": "genpushover"},
+        {"name": "genmqtt.py", "title": "MQTT Client", "desc": "MQTT Telemetry Publisher", "is_core": False, "section": "genmqtt"},
+        {"name": "gengpio.py", "title": "GPIO Controller", "desc": "Raspberry Pi GPIO Controller", "is_core": False, "section": "gengpio"},
+        {"name": "genlog.py", "title": "Activity Logger", "desc": "Generator Event Logger", "is_core": False, "section": "genlog"},
+        {"name": "genhomeassistant.py", "title": "Home Assistant", "desc": "Home Assistant MQTT Discovery", "is_core": False, "section": "genhomeassistant"},
+        {"name": "genexercise.py", "title": "Exercise Manager", "desc": "Automated Exercise Scheduler", "is_core": False, "section": "genexercise"},
+        {"name": "gensnmp.py", "title": "SNMP Agent", "desc": "SNMP Monitoring Agent", "is_core": False, "section": "gensnmp"},
+    ]
+
+    proc_info = {}
+    try:
+        import psutil
+        for p in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time', 'cpu_percent', 'memory_info']):
+            try:
+                cmd = p.info.get('cmdline') or []
+                cmd_str = " ".join(cmd)
+                for ks in known_services:
+                    s_name = ks["name"]
+                    if s_name in cmd_str:
+                        if s_name not in proc_info:
+                            proc_info[s_name] = []
+                        uptime = int(time.time() - (p.info.get('create_time') or time.time()))
+                        mem_mb = 0.0
+                        if p.info.get('memory_info'):
+                            mem_mb = round(p.info['memory_info'].rss / (1024 * 1024), 1)
+                        cpu_pct = p.info.get('cpu_percent') or 0.0
+                        proc_info[s_name].append({
+                            "pid": p.info['pid'],
+                            "uptime_seconds": uptime,
+                            "memory_mb": mem_mb,
+                            "cpu_percent": cpu_pct
+                        })
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+    except Exception:
+        # Fallback to pgrep if psutil is unavailable or encounters error
+        for ks in known_services:
+            s_name = ks["name"]
+            try:
+                out = subprocess.check_output(["pgrep", "-f", s_name], stderr=subprocess.DEVNULL).decode().strip()
+                if out:
+                    pids = [int(x) for x in out.split() if x.isdigit()]
+                    if pids:
+                        proc_info[s_name] = [{"pid": pid, "uptime_seconds": 0, "memory_mb": 0.0, "cpu_percent": 0.0} for pid in pids]
+            except Exception:
+                pass
+
+    # Read enabled states from genloader.conf
+    cfg_loader = ConfigFiles.get(GENLOADER_CONFIG) if "GENLOADER_CONFIG" in globals() else None
+
+    services_list = []
+    failed_count = 0
+    running_count = 0
+
+    for ks in known_services:
+        s_name = ks["name"]
+        is_core = ks["is_core"]
+        sec_name = ks["section"]
+
+        is_enabled = is_core
+        if not is_core and cfg_loader:
+            try:
+                is_enabled = cfg_loader.ReadValue("enable", return_type=bool, section=sec_name, default=False)
+            except Exception:
+                is_enabled = False
+
+        p_list = proc_info.get(s_name, [])
+        is_running = len(p_list) > 0
+        pids = [p["pid"] for p in p_list]
+        total_cpu = sum(p["cpu_percent"] for p in p_list)
+        total_mem = sum(p["memory_mb"] for p in p_list)
+        uptime = max((p["uptime_seconds"] for p in p_list), default=0)
+
+        if is_running:
+            status = "RUNNING"
+            status_code = "running"
+            running_count += 1
+        elif is_core or is_enabled:
+            status = "STOPPED / FAILED"
+            status_code = "failed"
+            failed_count += 1
+        else:
+            status = "INACTIVE / OFF"
+            status_code = "inactive"
+
+        services_list.append({
+            "name": s_name,
+            "title": ks["title"],
+            "description": ks["desc"],
+            "is_core": is_core,
+            "enabled": is_enabled,
+            "status": status,
+            "status_code": status_code,
+            "pids": pids,
+            "cpu_percent": round(total_cpu, 1),
+            "memory_mb": round(total_mem, 1),
+            "uptime_seconds": uptime,
+        })
+
+    # Check Tailscale Funnel / Remote Access status
+    tailscale_info = {
+        "installed": False,
+        "status": "STOPPED / OFF",
+        "status_code": "stopped",
+        "url": None,
+        "target": None,
+    }
+    try:
+        which_ts = subprocess.check_output(["which", "tailscale"], stderr=subprocess.DEVNULL).decode().strip()
+        if which_ts:
+            tailscale_info["installed"] = True
+            try:
+                ts_out = subprocess.check_output(["tailscale", "funnel", "status"], stderr=subprocess.DEVNULL, timeout=2).decode()
+                url_match = re.search(r'(https://[^\s]+)', ts_out)
+                target_match = re.search(r'proxy\s+([^\s]+)', ts_out)
+                ts_url = url_match.group(1) if url_match else None
+                ts_target = target_match.group(1) if target_match else None
+
+                if "Funnel on" in ts_out and ts_url:
+                    tailscale_info["status"] = "ACTIVE / ON"
+                    tailscale_info["status_code"] = "active"
+                    tailscale_info["url"] = ts_url
+                    tailscale_info["target"] = ts_target
+                elif "tailnet only" in ts_out and ts_url:
+                    tailscale_info["status"] = "TAILNET ONLY"
+                    tailscale_info["status_code"] = "tailnet"
+                    tailscale_info["url"] = ts_url
+                    tailscale_info["target"] = ts_target
+                elif subprocess.call(["pgrep", "-x", "tailscaled"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0:
+                    tailscale_info["status"] = "DAEMON ONLY / OFF"
+                    tailscale_info["status_code"] = "daemon"
+                else:
+                    tailscale_info["status"] = "STOPPED / OFF"
+                    tailscale_info["status_code"] = "stopped"
+            except Exception:
+                tailscale_info["status"] = "INACTIVE"
+                tailscale_info["status_code"] = "inactive"
+    except Exception:
+        tailscale_info["installed"] = False
+
+    overall_status = "NORMAL" if failed_count == 0 else "WARNING"
+
+    return {
+        "overall_status": overall_status,
+        "running_count": running_count,
+        "failed_count": failed_count,
+        "services": services_list,
+        "tailscale": tailscale_info,
+        "timestamp": int(time.time()),
+    }
+
+
+# -------------------------------------------------------------------------------
 # Backup Script Execution Manager
 # -------------------------------------------------------------------------------
 class BackupRunner:
@@ -1243,6 +1410,15 @@ backup_runner_instance = BackupRunner()
 
 # -------------------------------------------------------------------------------
 def ProcessCommand(command):
+
+    if command == "services_status_json":
+        return json.dumps(get_services_status_json())
+
+    if command == "restart_services_cmd_json":
+        if not HasWriteAccess():
+            return json.dumps({"result": "Error", "message": "Read Only Mode"})
+        Restart()
+        return json.dumps({"result": "OK", "message": "Service restart initiated."})
 
     if command == "script_logs_json":
         return json.dumps(get_script_logs_json())

@@ -821,6 +821,11 @@ var Poll = {
         if (d.tiles) Pages._updateGauges(d.tiles);
         Pages.status._updateInfoTiles(d);
         Pages.status._updateWeatherTile();
+        if (!S._servPollTick) S._servPollTick = 0;
+        if (++S._servPollTick % 3 === 0) {
+          if (!Store.isTileHidden('services')) Pages.status._updateServicesTile();
+          if (!Store.isTileHidden('scriptlogs')) Pages.status._updateScriptLogsTile();
+        }
         /* Auto-show weather tile when data arrives for the first time */
         if (S.weather && S.weather.length && !Store.get('weatherSeen')) {
           Store.set('weatherSeen', true);
@@ -1515,6 +1520,7 @@ var Pages = {
       specialKeys.push('clock');
       specialKeys.push('weather');
       specialKeys.push('scriptlogs');
+      specialKeys.push('services');
       /* Temperature chart tiles — one per sensor, hidden by default */
       S.sensors = info.Sensors || [];
       for (var ts = 0; ts < S.sensors.length; ts++) {
@@ -1564,6 +1570,8 @@ var Pages = {
           h += self._weatherTileHtml();
         } else if (key === 'scriptlogs') {
           h += self._scriptLogsTileHtml();
+        } else if (key === 'services') {
+          h += self._servicesTileHtml();
         } else if (km.keyToGauge[key] !== undefined) {
           var gi = km.keyToGauge[key];
           var t = tiles[gi];
@@ -1636,6 +1644,7 @@ var Pages = {
       /* Init clock */
       if (!Store.isTileHidden('clock')) self._initClock();
       if (!Store.isTileHidden('scriptlogs')) self._updateScriptLogsTile();
+      if (!Store.isTileHidden('services')) self._updateServicesTile();
 
       /* Init weather tile data */
       if (S.weather) {
@@ -1890,6 +1899,13 @@ var Pages = {
         Router.go('scriptlogs');
       });
 
+      /* Click services tile -> open inspect modal */
+      $c.on('click', '[data-tile="services"]', function(e) {
+        if (S.editMode) return;
+        if ($(e.target).closest('.tile-hide-btn, .tile-edit-controls, .tile-drag-handle, a').length) return;
+        self._showServicesInspectModal();
+      });
+
       /* Re-add tile from drawer */
       $c.on('click', '.drawer-tile', function() {
         var key = $(this).data('tile');
@@ -1912,6 +1928,7 @@ var Pages = {
         else if (key === 'clock') $new = $(self._clockTileHtml());
         else if (key === 'weather') $new = $(self._weatherTileHtml());
         else if (key === 'scriptlogs') $new = $(self._scriptLogsTileHtml());
+        else if (key === 'services') $new = $(self._servicesTileHtml());
         else if (km.keyToGauge[key] !== undefined) {
           var rgi = km.keyToGauge[key];
           $new = $(self._tileHtml(key, rgi, tiles[rgi]));
@@ -1945,6 +1962,7 @@ var Pages = {
         if (key === 'clock') self._initClock();
         if (key === 'weather' && S.weather) self._updateWeatherTile();
         if (key === 'scriptlogs') self._updateScriptLogsTile();
+        if (key === 'services') self._updateServicesTile();
         /* Add to order if missing */
         var ord = Store.getTileOrder(km.allKeys);
         if (ord.indexOf(key) === -1) ord.push(key);
@@ -1956,6 +1974,7 @@ var Pages = {
           if (d) self._updateInfoTiles(d);
           if (d && d.Weather) { S.weather = d.Weather; self._updateWeatherTile(); }
           self._updateScriptLogsTile();
+          self._updateServicesTile();
         });
       });
 
@@ -2257,6 +2276,156 @@ var Pages = {
         $b.html(html);
       }).fail(function() {
         $b.html('<div style="font-size:0.8rem;text-align:center;padding:8px 0;color:var(--text-muted);">Genmon service restart needed<br><span style="font-size:0.75rem;color:var(--danger,#f05252);">sudo systemctl restart genmon</span></div>');
+      });
+    },
+
+    _servicesTileHtml: function() {
+      var savedSize = Store.getTileSize('services') || 'md';
+      return '<div class="tile tile-' + esc(savedSize) + '" role="listitem" data-tile="services" data-size="' + esc(savedSize) + '" draggable="false" style="cursor:pointer;">' +
+        '<button type="button" class="tile-hide-btn" title="Hide tile" tabindex="-1" aria-hidden="true">&times;</button>' +
+        '<div class="tile-drag-handle" title="Drag to reorder" aria-hidden="true">' + icon('status') + '</div>' +
+        '<div class="tile-edit-controls" style="display:none" aria-hidden="true"><div class="tile-ctrl-row">' +
+        '<span class="tile-ctrl-label">Size</span>' +
+        '<button type="button" class="tile-size-btn" data-dir="down" title="Smaller" tabindex="-1">&minus;</button>' +
+        '<button type="button" class="tile-size-btn" data-dir="up" title="Larger" tabindex="-1">+</button>' +
+        '</div></div>' +
+        '<h2 class="tile-title">Background Services</h2>' +
+        '<div id="services-tile-body" style="padding:4px 0;">' +
+        '<div class="text-muted" style="font-size:.8rem;text-align:center;padding:12px 0">Loading services status…</div>' +
+        '</div></div>';
+    },
+
+    _updateServicesTile: function() {
+      var $b = $('#services-tile-body');
+      if (!$b.length) return;
+
+      API.get('services_status_json').done(function(d) {
+        if (!d || !d.services) return;
+
+        function formatStatusBadge(s) {
+          if (s.status_code === 'running') {
+            var pidTxt = (s.pids && s.pids.length) ? ' (' + s.pids[0] + ')' : '';
+            return '<span style="background:var(--green,#4CAF50); color:#fff; padding:2px 7px; border-radius:10px; font-weight:600; font-size:0.72rem;">🟢 RUNNING' + pidTxt + '</span>';
+          } else if (s.status_code === 'failed') {
+            return '<span style="background:var(--danger,#f05252); color:#fff; padding:2px 7px; border-radius:10px; font-weight:600; font-size:0.72rem;">🔴 STOPPED</span>';
+          } else {
+            return '<span style="background:var(--text-muted,#888); color:#fff; padding:2px 7px; border-radius:10px; font-weight:600; font-size:0.72rem;">⚪ OFF</span>';
+          }
+        }
+
+        var html = '';
+        if (d.failed_count > 0) {
+          html += '<div style="margin-bottom:8px; font-weight:600; color:var(--danger,#f05252); font-size:0.85rem; text-align:center;">⚠️ ' + d.failed_count + ' Service(s) Stopped / Failed</div>';
+        } else {
+          html += '<div style="margin-bottom:8px; font-weight:600; color:var(--green,#4CAF50); font-size:0.85rem; text-align:center;">✓ Background Daemons Normal</div>';
+        }
+
+        html += '<div style="font-size:0.82rem; display:flex; flex-direction:column; gap:6px;">';
+
+        var displayServices = d.services.filter(function(s) {
+          return s.is_core || s.enabled || s.status_code === 'running' || s.name === 'genwebpush.py';
+        });
+
+        displayServices.forEach(function(s) {
+          html += '<div style="display:flex; justify-content:space-between; align-items:center;"><span>' + esc(s.title) + ':</span> ' + formatStatusBadge(s) + '</div>';
+        });
+
+        if (d.tailscale) {
+          var ts = d.tailscale;
+          var tsBadge = '';
+          if (ts.status_code === 'active') {
+            var urlLink = ts.url ? ' <a href="' + esc(ts.url) + '" target="_blank" rel="noopener noreferrer" style="color:var(--accent,#3b82f6); text-decoration:none;" title="Open Tailscale URL">🔗</a>' : '';
+            tsBadge = '<span style="background:var(--green,#4CAF50); color:#fff; padding:2px 7px; border-radius:10px; font-weight:600; font-size:0.72rem;">🟢 ACTIVE' + urlLink + '</span>';
+          } else if (ts.status_code === 'tailnet') {
+            tsBadge = '<span style="background:#f59e0b; color:#fff; padding:2px 7px; border-radius:10px; font-weight:600; font-size:0.72rem;">🟡 TAILNET</span>';
+          } else if (ts.status_code === 'daemon') {
+            tsBadge = '<span style="background:var(--text-muted,#888); color:#fff; padding:2px 7px; border-radius:10px; font-weight:600; font-size:0.72rem;">⚪ DAEMON</span>';
+          } else {
+            tsBadge = '<span style="background:var(--danger,#f05252); color:#fff; padding:2px 7px; border-radius:10px; font-weight:600; font-size:0.72rem;">🔴 OFF</span>';
+          }
+          html += '<div style="display:flex; justify-content:space-between; align-items:center; border-top:1px dashed var(--border,#333); padding-top:4px; margin-top:2px;"><span>Tailscale Funnel:</span> ' + tsBadge + '</div>';
+        }
+
+        html += '</div>';
+        $b.html(html);
+      }).fail(function() {
+        $b.html('<div style="font-size:0.8rem;text-align:center;padding:8px 0;color:var(--text-muted);">Unable to load services status<br><span style="font-size:0.75rem;color:var(--danger,#f05252);">Service connection error</span></div>');
+      });
+    },
+
+    _showServicesInspectModal: function() {
+      API.get('services_status_json').done(function(d) {
+        if (!d) return;
+        var h = '<div style="display:flex; flex-direction:column; gap:14px;">';
+
+        h += '<div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg-card,#1e222d); padding:10px 14px; border-radius:8px; border:1px solid var(--border,#2e3440);">' +
+          '<div><div style="font-weight:600; font-size:0.95rem;">Overall System Status</div><div style="font-size:0.8rem; color:var(--text-muted);">' + esc(d.running_count) + ' Running, ' + esc(d.failed_count) + ' Failed</div></div>' +
+          (d.failed_count === 0 ? '<span style="background:var(--green,#4CAF50); color:#fff; padding:4px 10px; border-radius:12px; font-weight:600; font-size:0.8rem;">HEALTHY</span>' : '<span style="background:var(--danger,#f05252); color:#fff; padding:4px 10px; border-radius:12px; font-weight:600; font-size:0.8rem;">ATTENTION REQUIRED</span>') +
+          '</div>';
+
+        h += '<div style="overflow-x:auto;"><table style="width:100%; font-size:0.83rem; border-collapse:collapse;">' +
+          '<thead><tr style="border-bottom:1px solid var(--border,#333); text-align:left; color:var(--text-muted);">' +
+          '<th style="padding:6px 8px;">Service</th>' +
+          '<th style="padding:6px 8px;">Status</th>' +
+          '<th style="padding:6px 8px;">PID</th>' +
+          '<th style="padding:6px 8px;">CPU</th>' +
+          '<th style="padding:6px 8px;">Memory</th>' +
+          '<th style="padding:6px 8px;">Uptime</th>' +
+          '</tr></thead><tbody>';
+
+        (d.services || []).forEach(function(s) {
+          var statusPill = '';
+          if (s.status_code === 'running') {
+            statusPill = '<span style="background:var(--green,#4CAF50); color:#fff; padding:2px 6px; border-radius:8px; font-weight:600; font-size:0.7rem;">RUNNING</span>';
+          } else if (s.status_code === 'failed') {
+            statusPill = '<span style="background:var(--danger,#f05252); color:#fff; padding:2px 6px; border-radius:8px; font-weight:600; font-size:0.7rem;">STOPPED</span>';
+          } else {
+            statusPill = '<span style="background:var(--text-muted,#888); color:#fff; padding:2px 6px; border-radius:8px; font-weight:600; font-size:0.7rem;">INACTIVE</span>';
+          }
+
+          var uptimeFmt = '-';
+          if (s.uptime_seconds > 0) {
+            var hrs = Math.floor(s.uptime_seconds / 3600);
+            var mins = Math.floor((s.uptime_seconds % 3600) / 60);
+            uptimeFmt = (hrs > 0 ? hrs + 'h ' : '') + mins + 'm';
+          }
+
+          h += '<tr style="border-bottom:1px solid var(--border-light, rgba(255,255,255,0.05));">' +
+            '<td style="padding:8px;"><div style="font-weight:600;">' + esc(s.title) + '</div><div style="font-size:0.72rem; color:var(--text-muted);">' + esc(s.name) + '</div></td>' +
+            '<td style="padding:8px;">' + statusPill + '</td>' +
+            '<td style="padding:8px; font-family:monospace;">' + esc((s.pids||[]).join(', ') || '-') + '</td>' +
+            '<td style="padding:8px;">' + (s.status_code === 'running' ? s.cpu_percent + '%' : '-') + '</td>' +
+            '<td style="padding:8px;">' + (s.status_code === 'running' ? s.memory_mb + ' MB' : '-') + '</td>' +
+            '<td style="padding:8px;">' + uptimeFmt + '</td>' +
+            '</tr>';
+        });
+
+        h += '</tbody></table></div>';
+
+        if (d.tailscale && d.tailscale.installed) {
+          var ts = d.tailscale;
+          h += '<div style="background:var(--bg-card,#1e222d); padding:10px 14px; border-radius:8px; border:1px solid var(--border,#2e3440); font-size:0.83rem;">' +
+            '<div style="font-weight:600; margin-bottom:4px; display:flex; justify-content:space-between;"><span>Tailscale Funnel / Remote Access</span><span>' + esc(ts.status) + '</span></div>' +
+            (ts.url ? '<div><strong>Public URL:</strong> <a href="' + esc(ts.url) + '" target="_blank" rel="noopener noreferrer" style="color:var(--accent,#3b82f6);">' + esc(ts.url) + '</a></div>' : '') +
+            (ts.target ? '<div><strong>Proxy Target:</strong> ' + esc(ts.target) + '</div>' : '') +
+            '</div>';
+        }
+
+        h += '</div>';
+
+        var buttons = [
+          {text:'🔄 Restart Genmon Services', cls:'btn-danger', action:'restart'},
+          {text:'Close', cls:'btn-outline', action:'close'}
+        ];
+
+        Modal.show('Background Services Inspection', Modal.html(h), buttons).onAction(function(action) {
+          if (action === 'restart') {
+            Modal.confirm('Restart Genmon Services', 'Are you sure you want to restart all Genmon background services? The web server will briefly reload.', function() {
+              $.ajax({ url: CFG.baseUrl + 'restart', dataType: 'json', timeout: 0, cache: false });
+              Modal.restart('Service is restarting\u2026');
+            });
+          }
+        });
       });
     },
 
@@ -2563,7 +2732,7 @@ var Pages = {
       var tiles = S.tileConfig || [], infoTiles = Pages.status.INFO_TILES, h = '';
       var km = S.keyMap;
       if (!km) return;
-      var specialTitles = {overview: 'Status Overview', chart: S.chartTitle || 'Power Output', clock: 'Clock', weather: 'Weather', scriptlogs: 'Script Logs Status'};
+      var specialTitles = {overview: 'Status Overview', chart: S.chartTitle || 'Power Output', clock: 'Clock', weather: 'Weather', scriptlogs: 'Script Logs Status', services: 'Background Services'};
       /* Add temp chart titles */
       if (S.sensors) {
         for (var tdi = 0; tdi < S.sensors.length; tdi++) {
