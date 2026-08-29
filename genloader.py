@@ -317,6 +317,14 @@ class Loader(MySupport):
                         self.LibraryDependency("aiohttp"),
                     ],
                 },
+                {
+                    "modules": ["genwebpush"],
+                    "dependencies": [
+                        self.LibraryDependency("pywebpush"),
+                        self.LibraryDependency("cryptography"),
+                        self.LibraryDependency("http_ece"),
+                    ],
+                },
             ],
             "features": [
                 {
@@ -874,14 +882,22 @@ class Loader(MySupport):
         return not ErrorOccured
 
     # ---------------------------------------------------------------------------
-    def AddEntry(self, section=None, module=None, conffile="", args="", priority="2"):
+    def AddEntry(
+        self,
+        section=None,
+        module=None,
+        conffile="",
+        args="",
+        priority="2",
+        enable="False",
+    ):
 
         try:
             if section == None or module == None:
                 return
             self.config.WriteSection(section)
             self.config.WriteValue("module", module, section=section)
-            self.config.WriteValue("enable", "False", section=section)
+            self.config.WriteValue("enable", enable, section=section)
             self.config.WriteValue("hardstop", "False", section=section)
             self.config.WriteValue("conffile", conffile, section=section)
             self.config.WriteValue("args", args, section=section)
@@ -919,6 +935,20 @@ class Loader(MySupport):
                         "conffile", "gengpio.conf", section="gengpio"
                     )
                     self.LogError("Updated entry gengpio.conf")
+
+            # Ensure genwebpush is registered and enabled in genloader.conf if missing
+            if not self.config.HasSection("genwebpush"):
+                self.AddEntry(
+                    section="genwebpush",
+                    module="genwebpush.py",
+                    conffile="genwebpush.conf",
+                    args="",
+                    priority="2",
+                    enable="True",
+                )
+                self.LogError("Added missing genwebpush entry to genloader.conf")
+            elif not self.config.HasOption("enable"):
+                self.config.WriteValue("enable", "True", section="genwebpush")
 
             # check version info
             self.config.SetSection("genloader")
@@ -1014,6 +1044,7 @@ class Loader(MySupport):
                 "genloader",
                 "genhomeassistant",
                 "genhalink",
+                "genwebpush",
             ]
             for entry in ValidSections:
                 if not entry in Sections:
@@ -1197,6 +1228,18 @@ class Loader(MySupport):
                             section=entry,
                             module="gencustomgpio.py",
                             conffile="gencustomgpio.conf",
+                        )
+                    if entry == "genwebpush":
+                        self.LogError(
+                            "Warning: Missing entry: " + entry + " , adding entry"
+                        )
+                        self.AddEntry(
+                            section=entry,
+                            module="genwebpush.py",
+                            conffile="genwebpush.conf",
+                            args="",
+                            priority="2",
+                            enable="True",
                         )
                     if entry == "genloader":
                         self.LogError("Adding entry: " + entry)

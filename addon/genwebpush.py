@@ -490,10 +490,14 @@ def GetSubscriptionsFile() -> str:
         config.ReadValue("subscriptions_file", default="") if config else ""
     )
     if not sub_file:
-        data_dir = os.path.join(parent_root, "data")
-        if not os.path.exists(data_dir):
-            os.makedirs(data_dir, exist_ok=True)
-        sub_file = os.path.join(data_dir, "webpush_subscriptions.json")
+        conf_sub = os.path.join(ProgramDefaults.ConfPath, "webpush_subscriptions.json")
+        if os.path.exists(conf_sub):
+            sub_file = conf_sub
+        else:
+            data_dir = os.path.join(parent_root, "data")
+            if not os.path.exists(data_dir):
+                os.makedirs(data_dir, exist_ok=True)
+            sub_file = os.path.join(data_dir, "webpush_subscriptions.json")
     return sub_file
 
 
