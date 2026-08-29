@@ -3854,6 +3854,7 @@ def SaveAddOnSettings(query_string):
             "genhomeassistant": ConfigFiles[GENHOMEASSISTANT_CONFIG],
             "genhalink": ConfigFiles[GENHALINK_CONFIG],
             "genhubitat": ConfigFiles[GENHUBITAT_CONFIG],
+            "genwebpush": ConfigFiles.get(GENWEBPUSH_CONFIG, ConfigFiles[GENLOADER_CONFIG]),
         }
 
         for module, entries in settings.items():  # module
