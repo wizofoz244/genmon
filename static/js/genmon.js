@@ -2218,8 +2218,9 @@ var Pages = {
 
           dataObj.lines.forEach(function(line, idx) {
             var lineLower = line.toLowerCase();
-            var isErr = lineLower.indexOf('[error]') !== -1 || lineLower.indexOf('error') !== -1 || lineLower.indexOf('failed') !== -1 || lineLower.indexOf('exception') !== -1;
-            var isWarn = lineLower.indexOf('[warn]') !== -1 || lineLower.indexOf('warning') !== -1;
+            var isInfo = lineLower.indexOf('[info]') !== -1;
+            var isErr = !isInfo && (lineLower.indexOf('[error]') !== -1 || lineLower.indexOf('error') !== -1 || lineLower.indexOf('failed') !== -1 || lineLower.indexOf('exception') !== -1);
+            var isWarn = !isInfo && (lineLower.indexOf('[warn]') !== -1 || lineLower.indexOf('warning') !== -1);
 
             if (!isErr && !isWarn) return;
 
@@ -4879,8 +4880,9 @@ var Pages = {
 
         dataObj.lines.forEach(function(line, idx) {
           var lineLower = line.toLowerCase();
-          var isErr = lineLower.indexOf('[error]') !== -1 || lineLower.indexOf('error') !== -1 || lineLower.indexOf('failed') !== -1 || lineLower.indexOf('exception') !== -1;
-          var isWarn = lineLower.indexOf('[warn]') !== -1 || lineLower.indexOf('warning') !== -1;
+          var isInfo = lineLower.indexOf('[info]') !== -1;
+          var isErr = !isInfo && (lineLower.indexOf('[error]') !== -1 || lineLower.indexOf('error') !== -1 || lineLower.indexOf('failed') !== -1 || lineLower.indexOf('exception') !== -1);
+          var isWarn = !isInfo && (lineLower.indexOf('[warn]') !== -1 || lineLower.indexOf('warning') !== -1);
 
           if (!isErr && !isWarn) return;
 
@@ -4939,8 +4941,9 @@ var Pages = {
         if (search && line.toLowerCase().indexOf(search) === -1) return;
 
         var lineLower = line.toLowerCase();
-        var isErr = lineLower.indexOf('[error]') !== -1 || lineLower.indexOf('error') !== -1 || lineLower.indexOf('failed') !== -1 || lineLower.indexOf('exception') !== -1;
-        var isWarn = lineLower.indexOf('[warn]') !== -1 || lineLower.indexOf('warning') !== -1;
+        var isInfo = lineLower.indexOf('[info]') !== -1;
+        var isErr = !isInfo && (lineLower.indexOf('[error]') !== -1 || lineLower.indexOf('error') !== -1 || lineLower.indexOf('failed') !== -1 || lineLower.indexOf('exception') !== -1);
+        var isWarn = !isInfo && (lineLower.indexOf('[warn]') !== -1 || lineLower.indexOf('warning') !== -1);
 
         var tm = line.match(/(?:\[)?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})(?:\])?/);
         var lineTs = tm ? new Date(tm[1].replace(' ', 'T')).getTime() : null;

@@ -1067,7 +1067,7 @@ def OnAlarm(
             msg = "Generator Alarm Cleared"
 
         if console:
-            console.error("WebPush Alarm: " + msg)
+            console.info("WebPush Alarm: " + msg)
         SendWebPushPayload("🚨 Genmon Generator ALARM!", msg, category="error")
 
 
@@ -1201,7 +1201,7 @@ def OnPiState(
             else "Pi Health Normal"
         )
         if console:
-            console.warning("WebPush PiState: " + msg)
+            console.info("WebPush PiState: " + msg)
         SendWebPushPayload("Genmon System Warning", msg, category="warning")
 
 

@@ -953,20 +953,29 @@ def get_script_logs_json():
             with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
                 lines = [l.rstrip() for l in f.readlines()]
                 tail_lines = lines[-200:] if len(lines) > 200 else lines
-                full_text = "\n".join(tail_lines).lower()
-                has_err = any(
-                    k in full_text
-                    for k in [
-                        "error",
-                        "fail",
-                        "failed",
-                        "critical",
-                        "exception",
-                        "permission denied",
-                        "unit genmon.service not found",
-                    ]
-                )
-                has_warn = any(k in full_text for k in ["warn", "warning"])
+                has_err = False
+                has_warn = False
+                for line in tail_lines:
+                    l_low = line.lower()
+                    if "[info]" in l_low:
+                        continue
+                    if any(
+                        k in l_low
+                        for k in [
+                            "[error]",
+                            "[critical]",
+                            "error",
+                            "fail",
+                            "failed",
+                            "critical",
+                            "exception",
+                            "permission denied",
+                            "unit genmon.service not found",
+                        ]
+                    ):
+                        has_err = True
+                    if any(k in l_low for k in ["[warn]", "[warning]", "warning", "warn"]):
+                        has_warn = True
                 return {
                     "path": filepath,
                     "lines": tail_lines if tail_lines else ["Log file is empty."],
