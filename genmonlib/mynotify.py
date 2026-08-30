@@ -319,8 +319,6 @@ class GenNotify(MyCommon):
                         + ": "
                         + str(EventCallback)
                     )
-            else:
-                self.LogError("Invalid Callback in ProcessEventData : None : " + name)
         except Exception as e1:
             self.LogErrorLine("Error in ProcessEventData: " + name + ": " + str(e1))
 
