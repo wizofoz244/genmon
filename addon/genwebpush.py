@@ -1205,6 +1205,23 @@ def OnPiState(
         SendWebPushPayload("Genmon System Warning", msg, category="warning")
 
 
+def OnSystemHealth(
+    notice: str,
+    *args: Any,
+    **kwargs: Any,
+) -> None:
+    """Handles Genmon monitor and system health alerts."""
+    InitConfigIfNeeded()
+    if config and config.ReadValue(
+        "notify_info", return_type=bool, default=True
+    ):
+        msg = f"System Health: {notice}"
+        if console:
+            console.info(f"WebPush System Health: {notice}")
+        cat = "info" if str(notice).strip().upper() == "OK" else "warning"
+        SendWebPushPayload("Genmon System Health", msg, category=cat)
+
+
 def signal_handler(sig: int, frame: Any) -> None:
     """Handles termination signals for clean process exit."""
     sys.exit(0)
@@ -1249,6 +1266,7 @@ if __name__ == "__main__":
         onmanual=OnManual,
         onutilitychange=OnOutage,
         onsoftwareupdate=OnSoftwareUpdate,
+        onsystemhealth=OnSystemHealth,
         onfuelstate=OnFuelState,
         onpistate=OnPiState,
     )
