@@ -250,6 +250,15 @@ def HasWriteAccess():
     return session.get("write_access", False)
 
 
+def IsAuthenticated():
+    """Return True if the current request is authenticated.
+    When authentication is disabled everyone is authenticated.
+    When authentication is enabled the session must have logged_in True."""
+    if not LoginActive():
+        return True
+    return bool(session.get("logged_in", False))
+
+
 # -------------------------------------------------------------------------------
 @app.before_request
 def csrf_check():
@@ -7941,8 +7950,8 @@ def webpush_vapid_key():
 @app.route("/api/webpush/subscribe", methods=["POST"])
 def webpush_subscribe():
     try:
-        if not HasWriteAccess():
-            return jsonify(status="error", message="Unauthorized: Write access required"), 403
+        if not IsAuthenticated():
+            return jsonify(status="error", message="Unauthorized: Login required"), 401
         sub_data = request.get_json(force=True, silent=True) or {}
         if not sub_data or "endpoint" not in sub_data:
             return jsonify(status="error", message="Invalid subscription payload"), 400
@@ -7957,8 +7966,8 @@ def webpush_subscribe():
 @app.route("/api/webpush/unsubscribe", methods=["POST"])
 def webpush_unsubscribe():
     try:
-        if not HasWriteAccess():
-            return jsonify(status="error", message="Unauthorized: Write access required"), 403
+        if not IsAuthenticated():
+            return jsonify(status="error", message="Unauthorized: Login required"), 401
         data = request.get_json(force=True, silent=True) or {}
         endpoint = data.get("endpoint")
         if endpoint:
@@ -7973,8 +7982,8 @@ def webpush_unsubscribe():
 @app.route("/api/webpush/update_name", methods=["POST"])
 def webpush_update_name():
     try:
-        if not HasWriteAccess():
-            return jsonify(status="error", message="Unauthorized: Write access required"), 403
+        if not IsAuthenticated():
+            return jsonify(status="error", message="Unauthorized: Login required"), 401
         data = request.get_json(force=True, silent=True) or {}
         endpoint = data.get("endpoint")
         new_name = data.get("device_name")
@@ -8001,6 +8010,13 @@ def webpush_subscriptions():
 @app.route("/api/webpush/preferences", methods=["GET", "POST"])
 def webpush_preferences():
     try:
+        if not IsAuthenticated():
+            return jsonify(status="error", message="Unauthorized: Login required"), 401
+
+        if request.method == "POST":
+            if not HasWriteAccess():
+                return jsonify(status="error", message="Unauthorized: Write access required"), 403
+
         cfg_file = GENWEBPUSH_CONFIG if ("GENWEBPUSH_CONFIG" in globals() and GENWEBPUSH_CONFIG) else os.path.join(ConfigFilePath, "genwebpush.conf")
         config_obj = ConfigFiles.get(cfg_file)
         if not config_obj:
@@ -8008,8 +8024,6 @@ def webpush_preferences():
             ConfigFiles[cfg_file] = config_obj
 
         if request.method == "POST":
-            if not HasWriteAccess():
-                return jsonify(status="error", message="Unauthorized: Write access required"), 403
             data = request.get_json(force=True, silent=True) or {}
             for key in ["vapid_email", "notify_outage", "notify_exercise", "notify_error", "notify_warning", "notify_off_manual", "notify_fuel", "notify_pi_state", "notify_sw_update", "notify_info"]:
                 if key in data:
@@ -8032,8 +8046,8 @@ def webpush_preferences():
 @app.route("/api/webpush/test", methods=["POST"])
 def webpush_test():
     try:
-        if not HasWriteAccess():
-            return jsonify(status="error", message="Unauthorized: Write access required"), 403
+        if not IsAuthenticated():
+            return jsonify(status="error", message="Unauthorized: Login required"), 401
         data = request.get_json(force=True, silent=True) or {}
         endpoint = data.get("endpoint")
         from addon.genwebpush import SendWebPushPayload
