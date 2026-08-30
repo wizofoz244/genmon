@@ -6,8 +6,7 @@ from unittest.mock import MagicMock
 
 class MockModule(MagicMock):
     """MagicMock subclass that simulates a module with nested attributes."""
-    def __getattr__(self, name):
-        return MagicMock()
+    pass
 
 MOCK_MODULE_NAMES = [
     "flask",
@@ -43,6 +42,13 @@ for mod_name in MOCK_MODULE_NAMES:
             __import__(mod_name)
         except ImportError:
             sys.modules[mod_name] = MockModule()
+
+if "flask" in sys.modules and isinstance(sys.modules["flask"], MockModule):
+    mock_app = MagicMock()
+    mock_app.route = lambda *args, **kwargs: (lambda f: f)
+    mock_app.before_request = lambda f: f
+    mock_app.after_request = lambda f: f
+    sys.modules["flask"].Flask.return_value = mock_app
 
 # Safe logger setup for unprivileged test execution (avoids /var/log permission errors)
 try:
