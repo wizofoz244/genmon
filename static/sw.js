@@ -7,7 +7,7 @@
  */
 
 /** @const {string} Current cache storage name. */
-const CACHE_NAME = 'genmon-v10';
+const CACHE_NAME = 'genmon-v11';
 
 /**
  * Core assets kept for offline resilience. Navigation and dynamic API responses
@@ -68,13 +68,23 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/cmd/') || url.pathname.startsWith('/api/')) return;
 
   event.respondWith(
-    fetch(req).then((response) => {
-      if (response && response.ok) {
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
-      }
-      return response;
-    }).catch(() => caches.match(req))
+    fetch(req)
+      .then((response) => {
+        if (response && response.ok) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, clone)).catch(() => {});
+        }
+        return response;
+      })
+      .catch(async () => {
+        const cached = await caches.match(req);
+        if (cached) return cached;
+        return new Response('Network unavailable or service restarting', {
+          status: 503,
+          statusText: 'Service Unavailable',
+          headers: { 'Content-Type': 'text/plain' }
+        });
+      })
   );
 });
 
