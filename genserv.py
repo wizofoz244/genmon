@@ -957,25 +957,16 @@ def get_script_logs_json():
                 has_warn = False
                 for line in tail_lines:
                     l_low = line.lower()
-                    if "[info]" in l_low:
+                    level_match = re.search(r'\[(info|debug|warn|warning|error|critical|fatal|exception)\]', l_low)
+                    if level_match:
+                        lvl = level_match.group(1)
+                        if lvl in ("error", "critical", "fatal", "exception"):
+                            has_err = True
+                        elif lvl in ("warn", "warning"):
+                            has_warn = True
                         continue
-                    if any(
-                        k in l_low
-                        for k in [
-                            "[error]",
-                            "[critical]",
-                            "error",
-                            "fail",
-                            "failed",
-                            "critical",
-                            "exception",
-                            "permission denied",
-                            "unit genmon.service not found",
-                        ]
-                    ):
+                    if any(k in l_low for k in ["traceback (most recent call last)", "error:", "exception:"]):
                         has_err = True
-                    if any(k in l_low for k in ["[warn]", "[warning]", "warning", "warn"]):
-                        has_warn = True
                 return {
                     "path": filepath,
                     "lines": tail_lines if tail_lines else ["Log file is empty."],

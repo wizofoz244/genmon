@@ -15,9 +15,11 @@ class TestLogInfoFiltering(unittest.TestCase):
     def test_info_log_with_warning_text_not_flagged_as_warning(self):
         """Verify log lines tagged [INFO] containing 'warning' are not marked as has_warning."""
         sample_log = (
-            "[2026-08-30 13:40:00] [INFO] Dispatched push payload 'Genmon System Warning' to Pixel 10\n"
-            "[2026-08-30 13:40:01] [INFO] No active Web Push subscriptions targetable for: Genmon System Warning\n"
-            "[2026-08-30 13:40:02] [INFO] Switch changed to OFF: Switch Off Warning\n"
+            "[2026-08-31 14:22:29] [INFO] Dispatched push payload 'Genmon Software Update' to Lenovo Tab (https://fcm.googleapis.com/fcm/send/eAQK...)\n"
+            "[2026-08-31 14:22:29] [INFO] Dispatched push payload 'Genmon System Warning' to Pixel 10 (https://fcm.googleapis.com/fcm/send/dKSH...)\n"
+            "[2026-08-31 14:22:29] [INFO] Dispatched push payload 'Genmon System Warning' to MacBook i7 (https://fcm.googleapis.com/fcm/send/fLDA...)\n"
+            "[2026-08-31 14:22:30] [INFO] Dispatched push payload 'Genmon System Warning' to iPhone (https://web.push.apple.com/QPh1JsjT03Nl8...)\n"
+            "[2026-08-31 14:22:30] [INFO] Dispatched push payload 'Genmon System Warning' to Lenovo Tab (https://fcm.googleapis.com/fcm/send/eAQK...)\n"
         )
         with patch("genserv.os.path.exists", return_value=True):
             with patch("builtins.open", mock_open(read_data=sample_log)):

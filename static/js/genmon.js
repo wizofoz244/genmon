@@ -2217,10 +2217,9 @@ var Pages = {
           var hasWarn = false;
 
           dataObj.lines.forEach(function(line, idx) {
-            var lineLower = line.toLowerCase();
-            var isInfo = lineLower.indexOf('[info]') !== -1;
-            var isErr = !isInfo && (lineLower.indexOf('[error]') !== -1 || lineLower.indexOf('error') !== -1 || lineLower.indexOf('failed') !== -1 || lineLower.indexOf('exception') !== -1);
-            var isWarn = !isInfo && (lineLower.indexOf('[warn]') !== -1 || lineLower.indexOf('warning') !== -1);
+            var sev = Pages.scriptlogs ? Pages.scriptlogs._getLineSeverity(line) : 'info';
+            var isErr = (sev === 'error');
+            var isWarn = (sev === 'warn');
 
             if (!isErr && !isWarn) return;
 
@@ -4849,6 +4848,23 @@ var Pages = {
       if (tabKey === 'webpush') return self._data.genwebpush_log;
       return null;
     },
+    _getLineSeverity: function(line) {
+      if (!line) return 'info';
+      // Strictly look for log level keyword between brackets [LEVEL]
+      var m = line.match(/\[(error|critical|fatal|exception|warn|warning|info|debug)\]/i);
+      if (m) {
+        var lvl = m[1].toLowerCase();
+        if (lvl === 'error' || lvl === 'critical' || lvl === 'fatal' || lvl === 'exception') return 'error';
+        if (lvl === 'warn' || lvl === 'warning') return 'warn';
+        return 'info';
+      }
+      // Fallback ONLY when line has no bracketed tag (e.g. unformatted tracebacks or shell errors)
+      var l = line.toLowerCase();
+      if (l.indexOf('traceback (most recent call last)') !== -1 || l.indexOf('error:') !== -1 || l.indexOf('exception:') !== -1) {
+        return 'error';
+      }
+      return 'info';
+    },
     _load: function() {
       var self = Pages.scriptlogs;
       $('#sl-content').html('<span style="color:var(--text-muted)">Loading script logs…</span>');
@@ -4879,10 +4895,9 @@ var Pages = {
         var unackWarn = false;
 
         dataObj.lines.forEach(function(line, idx) {
-          var lineLower = line.toLowerCase();
-          var isInfo = lineLower.indexOf('[info]') !== -1;
-          var isErr = !isInfo && (lineLower.indexOf('[error]') !== -1 || lineLower.indexOf('error') !== -1 || lineLower.indexOf('failed') !== -1 || lineLower.indexOf('exception') !== -1);
-          var isWarn = !isInfo && (lineLower.indexOf('[warn]') !== -1 || lineLower.indexOf('warning') !== -1);
+          var sev = self._getLineSeverity(line);
+          var isErr = (sev === 'error');
+          var isWarn = (sev === 'warn');
 
           if (!isErr && !isWarn) return;
 
@@ -4940,10 +4955,9 @@ var Pages = {
       lines.forEach(function(line, idx) {
         if (search && line.toLowerCase().indexOf(search) === -1) return;
 
-        var lineLower = line.toLowerCase();
-        var isInfo = lineLower.indexOf('[info]') !== -1;
-        var isErr = !isInfo && (lineLower.indexOf('[error]') !== -1 || lineLower.indexOf('error') !== -1 || lineLower.indexOf('failed') !== -1 || lineLower.indexOf('exception') !== -1);
-        var isWarn = !isInfo && (lineLower.indexOf('[warn]') !== -1 || lineLower.indexOf('warning') !== -1);
+        var sev = self._getLineSeverity(line);
+        var isErr = (sev === 'error');
+        var isWarn = (sev === 'warn');
 
         var tm = line.match(/(?:\[)?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})(?:\])?/);
         var lineTs = tm ? new Date(tm[1].replace(' ', 'T')).getTime() : null;
