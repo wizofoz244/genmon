@@ -105,3 +105,10 @@ ehthumbs.db
 Thumbs.db
 /.vs
 /.idea
+
+# Genmon runtime data and local config secrets #
+################################################
+conf/genwebpush.conf
+maintlog.json
+data/webpush_subscriptions.json
+data/*.json

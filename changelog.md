@@ -1,6 +1,30 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Oz Custom Addons v1.2.0 - 2026-08-18
+- **Refactoring to Google Standards**: Refactored all custom Python modules (`genwebpush.py`, `genmaint_sync.py`, test suite) to strict Google Python Style Guide (typing, Google docstrings with Args/Returns/Raises, modularity).
+- **Google Frontend Standards**: Applied Google JavaScript and HTML/CSS standards (JSDoc comments, clean DOM handling, accessible semantic markup) across Web UI and Service Worker (`sw.js`).
+- **PWA Web Push Notifications (`addon/genwebpush.py`)**: Added native Web Push alerts supporting RFC 8292 VAPID encryption, Apple APNs / Safari PWA support on iOS and macOS, custom device labeling, and specific alarm reason extraction.
+- **Wi-Fi Band Detection**: Added operating frequency band detection (2.4 GHz / 5 GHz / 6 GHz) on dashboard signal tile and platform diagnostics.
+- **Script Logs Viewer & Dashboard Tile**: Added dedicated Script Logs page (`/#/logs`), live error/warning badge highlighting, error acknowledgment, and dashboard tile navigation.
+- **Background Services Live Dashboard Tile**: Added real-time dashboard status tile for background services and daemons (matching `startgenmon.sh status`), live process inspect modal with CPU/memory/PID details, Tailscale Funnel connectivity status, and service restart action.
+- **System Health Notifications & Callback Silence**: Added `OnSystemHealth` Web Push notification handler in `addon/genwebpush.py` and silenced spurious `Invalid Callback in ProcessEventData` errors in `genmonlib/mynotify.py` when optional event callbacks are omitted.
+- **Read-Only Push Subscriptions**: Allowed read-only authenticated accounts to register/unregister personal device push subscriptions, update device labels, and send test push alerts without requiring administrator write privileges.
+- **Log Level & Warning False-Positive Fix**: Ensured push notification dispatches log as `[INFO]` and updated log severity parsers in `genserv.py` and `static/js/genmon.js` so entries explicitly marked `[INFO]` are never classified or highlighted as warnings or errors.
+- **Manual Backups Web Console**: Live streaming execution console for Daily Genmon Backups and Weekly SD Card Image routines directly from the web interface.
+- **Web UI Session Security**: Added global "Logout All Devices" session revocation, secure cookie clearing on logout, Passkey / WebAuthn, and MFA backup codes.
+- **Automated Test Suite**: Added 57 unit and integration tests across `tests/unit/` and `tests/integration/` with GitHub Actions CI automation.
+
+## 2.0.02 -2026-08-04
+- New add on for Hubitat Elevation hub, Thanks @bdwilson
+- Support for PowerZone 200. Note: a special cable is required. (Thanks @LSGONE, @BillyEll, @skipfire and @gm58)
+- Support for Basler DGC-2020HD Controller
+- Added start / transfer command for PowerZone 200 (Thanks @LSGONE and @BillyEll)
+- Updates to correct web UI cache issue (thanks @MichaelB2018)
+- Updates to improve compatibility with screen readers (thanks @skipfire)
+- Corrected serial number look up (thanks @MichaelB2018)
+- Update to add new gague type for Wifi and adjusted the signal strength dBm to percent conversion (thanks @MichaelB2018)
+
 ## 2.0.01 -2026-05-18
 - Various bug fixes and typo corrections
 - Added per module dependancy checking that should help with quicker updates when new modules are added. Thanks @klinquist
@@ -13,11 +37,6 @@ All notable changes to this project will be documented in this file.
 - Performance improvement for temperature graphs, Thanks @MichaelB2018
 - New add on for Otodata Bluetooth propane tank sensor, Thanks @bdwilson
 - Update to change the web app cache priority that may fix some networks with slow loading web pages
-- New add on for Hubitat Elevation hub, Thanks @bdwilson
-- Initial updates for PowerZone 200. Note: a special cable is required.
-- Initial support for Basler DGC-2020HD Controller
-- Added start / transfer command for PowerZone 200 (Thanks @LSGONE and @BillyEll)
-
 
 ## 2.0.00 -2026-04-05
 - Major update to UI Thanks @MichaelB2018

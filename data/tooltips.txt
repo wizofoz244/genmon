@@ -12,6 +12,7 @@ imap_server = Server address used for receiving email, leave empty to disable IM
 smtp_port = SMTP port used on the SMTP server for sending email. Typically port 587 is used for TLS and port 465 is used for SSL
 ssl_enabled = Use SSL encryption to send emails
 tls_disable = If SSL is disabled TLS encryption is the default, unless this is enabled. If enabled and SSL is disabled, no encryption will be used to send email.
+use_html = Send a structured HTML alternative (in addition to plain text) so screen readers get clear pauses between status lines.
 smtpauth_disable = If enabled, ignore SMTP authentication. Typically only used for locally administered SMTP servers
 sitename = Site Name
 port = Serial device name of your serial port. Normally  /dev/serial0 or /dev/ttyAMA0 for onboard Raspberry Pi Serial ports
@@ -39,7 +40,7 @@ syncdst = Enable to sync the generator time to the system time if there is a cha
 synctime = Enables syncing the generator time to the system time once every hour. This does not change the system time, only the generator time.
 enhancedexercise = Enable the functionality to support biweekly and monthly exercise times (weekly is the default). Note, your generator controller must support this before enabling this option. Evolution only and firmware version dependent.
 usehttps = HTTPS (secure HTTP) and / or user name and password authentication.
-cert_mode = Certificate mode for HTTPS. 'selfsigned' generates a temporary certificate on each restart (browser will show a warning). 'localca' creates a persistent local CA you can import into your browser for a trusted connection. 'custom' lets you supply your own certificate and key files.
+cert_mode = Certificate mode for HTTPS. 'selfsigned' generates a temporary certificate on each restart (browser will show a warning). 'localca' creates a persistent local CA you can import into your browser for a trusted connection. 'tailscale' automatically manages Let's Encrypt certificates via Tailscale with auto-renewal before the 90-day expiration. 'custom' lets you supply your own certificate and key files.
 keyfile = Path and filename of the key file for your own certificate (cert_mode = custom).
 certfile = Path and filename of the certificate file for your own certificate (cert_mode = custom).
 http_user = Simple authentication will be used. Sets the username of the simple authentication. Leave blank to disable. 'Use Secure Web Settings' must be enabled to use this feature.
@@ -48,6 +49,7 @@ http_user_ro = Sets the username of the limited rights user. Leave blank to disa
 http_pass_ro = Sets the password of the limited rights user. Leave blank to disable. 'Use Secure Web Settings' and full rights user must be enabled to use this feature.
 http_port = HTTP port to be used by the web server.
 https_port = Port to override the secure web server port (https). The default value is 443.
+allow_iframe = SECURITY RISK - keep this OFF unless you understand the risks. Off (default, recommended) blocks all iframe embedding for the web interface, which protects against clickjacking. Turning it On lets ANY website embed the genmon web page in an iframe, which can be abused to trick you into clicking controls. Only enable it if you are embedding genmon in your own trusted dashboard (e.g. Home Assistant) on a network you control.
 favicon = favicon for website. This is an optional parameter and default is "favicon.ico". This may not work in older browsers
 system_theme = Use the browser-provided light/dark theme setting in the UI, and remove the manual theme switcher. This may not work in older brwsers
 usemfa = Use Multi-Factor Authentication. You must use a Multi-Factor Authenticator app like Google Authenticator or Authy to use this feature. If enabled, MFA will apply to both normal and limited rights login.
@@ -116,8 +118,9 @@ multi_instance = If Enabled this setting will allow multiple instances of genmon
 usecalculatedpower=Calculate power output from power factor, average current and average voltage
 uselinuxwifisignalgauge=if enabled and running linux the WiFi signal will be displayed on a gauge in the web interface. Note, the gauge will not show if you are using Ethernet for your network.
 wifiispercent=Some Linux wifi drivers (like USB wifi adapters) may return a percentage instead of a raw signal strength. If your wifi gauge is not working as expected, try enabling this setting. Note, the built in raspberry pi driver returns signal strength, not percentage so if using the on board adapter this setting should be disabled.
-preferred_network_adapter=If genmon failes to identify your network adapter correctly in cases where multiple adapaters are present, set this value to the adapater name that you would like genmon to report as the active network device. Note: only WLAN adapters display statistics.
 useraspberrypicputempgauge=If enabled and running on a Linux system, the CPU temperature will be displayed on a gauge in the web interface.
+use_pi_power_monitor=If enabled and running on a Linux system with a pi_power_monitor.log file, the Pi Core Voltage and Under Voltage status will be displayed on a gauge and graph panel in the web interface.
+pi_power_log_path=The file path to the rotating pi_power_monitor.log file (defaults to /var/log/pi_power_monitor.log).
 max_login_attempts=The maximum number of failed login attempts to the web interface before a temporary lockout is started. A lockout will prevent any login attempts. If the login failures occur within the time frame of lockout duration then then logins will be blocked for the number of seconds of lockout duration. Set to zero to disable.
 login_lockout_seconds=The number of seconds to perform a lockout if failed logins exceed Maximum Login Attempts. For example if this value is 300 seconds (5 min) and max attempt is 5, then if 5 logins failures occur in a row within 5 minutes, the a lockout will occur for 5 minutes.
 remember_me_days=Number of days the browser remembers your login when you check "Remember me". Set to 0 for a browser-session only — your login expires as soon as you close the browser.
@@ -203,14 +206,34 @@ show_hours_activation=Enable to show Time Since Activation as hours, disable to 
 0009=Utility Voltage
 05f1=Last Alarm Code (Evo)
 01f4=Serial Number
+0637=Power Zone 200 Alarm active flag
+0638=Power Zone 200 Warning active flag
+0639=Power Zone 200 Maintenance active flag
+063a=Power Zone 200 Single phase flag
+07e6=Firmware Build Major
+07e7=Firmware Build Minor
 1f72=Power Zone 200 L1 Volts
 1f73=Power Zone 200 L2 Volts
 1f74=Power Zone 200 L3 Volts
-1f75=Power Zone 200 L1 Amps, divide by 100
-1f76=Power Zone 200 L2 Amps, divide by 100
-1f77=Power Zone 200 L3 Amps, divide by 100
+1f75=Power Zone 200 L1 Amps
+1f76=Power Zone 200 L2 Amps
+1f77=Power Zone 200 L3 Amps
 1f7b=Power Zone 200 Power Factor
 1f7c=Power Zone 200 Totak kw hours
+1fa4=Power Zone 200 Utility volts L1
+1fa5=Power Zone 200 Utility volts L2
+1fa6=Power Zone 200 Utility volts L2
+2134=Power Zone 200 Real Power kW
+2135=Power Zone 200 Reactive Power kW
+2136=Power Zone 200 Apparant Power kW
+2137=Power Zone 200 Last Run Minutes (duration of the last generator run in minutes)
+2138=Power Zone 200 Last Run kWH (last generator run in kWH)
+2166=Power Zone 200 Transfer switch active = 1
+0608=Power Zone 200 Engine intake/throttle temperature
+060c=Power Zone 200 Engine percent torque / engine load
+0613=Power Zone 200 Fuel pressure, cranking
+0614=Power Zone 200 Fuel pressure, running
+2008=Power Zone 200 Oil level
 
 [h_100]
 0080=Input 1
@@ -350,7 +373,7 @@ show_hours_activation=Enable to show Time Since Activation as hours, disable to 
 0ebf=External Switch SW Version
 0ec0=External Switch Selected
 
-[powerzone]
+[powerzone_pro]
 0000 = RA Status 0
 0001 = RA Status 1
 0002 = RA Status 2

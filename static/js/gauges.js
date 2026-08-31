@@ -461,7 +461,8 @@
 
   GenmonArc.prototype._build = function() {
     var o = this.opts, id = uid();
-    var svg = svgEl('svg', {viewBox:'0 0 200 120', class:'arc-gauge-svg',
+    /* viewBox padded horizontally so edge labels breathe and never clip */
+    var svg = svgEl('svg', {viewBox:'-14 -4 228 128', class:'arc-gauge-svg',
       width:'100%', height:'100%'});
 
     /* Defs: glow filter, clip path, gradient */
@@ -523,7 +524,7 @@
       /* Numeric labels at major ticks */
       if (maj) {
         var lv = o.min + frac * (o.max - o.min);
-        var lr = AR + 20;
+        var lr = AR + 22;
         var lt = svgEl('text', {x:ACX+lr*cs, y:ACY+lr*sn+1,
           'text-anchor':'middle', 'dominant-baseline':'middle',
           fill:'var(--gauge-label-fill)', 'font-size':'10',

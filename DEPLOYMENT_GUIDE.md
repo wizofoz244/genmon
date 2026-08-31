@@ -1,6 +1,6 @@
 # Complete Genmon Setup, Backup & Deployment Guide
 
-This document captures the complete architecture, data processing scripts, automated backup routines, custom add-ons, web UI optimization, GitHub fork management, and Raspberry Pi systemd deployment for this Genmon generator monitoring system.
+This document captures the complete architecture, data processing scripts, automated backup routines, custom add-ons, web UI optimization, GitHub fork management, test framework, and Raspberry Pi systemd deployment for this Genmon generator monitoring system.
 
 ---
 
@@ -31,8 +31,9 @@ This document captures the complete architecture, data processing scripts, autom
  |                                                                                   |
  |  +-----------------------------------------------------------------------------+  |
  |  | Cron Automated Tasks                                                        |  |
- |  |  - Daily @ 4:00 AM:  /home/genmonpi/backup_to_mac.sh (Genmon Archive)       |  |
- |  |  - Sunday @ 4:00 AM: /home/genmonpi/sdcard_backup_to_mac.sh (SD Card Image)  |  |
+ |  |  - Every 3 Mins:      /home/genmonpi/genmon/net_watchdog.sh (Network Watchdog) |  |
+ |  |  - Daily @ 4:00 AM:  /home/genmonpi/genmon/backup_to_mac.sh (Genmon Archive)    |  |
+ |  |  - Sunday @ 4:00 AM: /home/genmonpi/genmon/sdcard_backup_to_mac.sh (SD Card) |  |
  |  +-----------------------------------------------------------------------------+  |
  +-----------------------------------------------------------------------------------+
 ```
@@ -92,180 +93,224 @@ sudo python3 /home/genmonpi/genmon/addon/genmaint_sync.py -c /etc/genmon [option
 
 ### Documentation & Unit Tests
 - Add-on Documentation: [addon/README_genmaint_sync.md](file:///Users/oz/Develop/genmon/addon/README_genmaint_sync.md)
-- Unit Test Suite: `python3 -m unittest addon/test_genmaint_sync.py`
+- Unit Test Suite: `python3 -m unittest discover -s tests -p "test_*.py"`
 
 ---
 
 ## 4. Automated Backup Routines to Mac Server
 
-The Raspberry Pi backs up data automatically to an SMB network share hosted on a Mac server (`192.168.128.15`).
+### CIFS Mount Configuration (`/etc/fstab`)
+```text
+//192.168.128.15/pibackup /mnt/pibackup cifs credentials=/etc/smbcredentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0,nofail,_netdev,x-systemd.automount,x-systemd.mount-timeout=30 0 0
+```
+- **Automount**: `x-systemd.automount` ensures mount is only triggered on demand.
+- **Timeout**: `x-systemd.mount-timeout=30` prevents boot stalls if Mac is offline.
 
-### SMB Share Mount Configuration (`/etc/fstab`)
-- **Mac Server IP**: `192.168.128.15`
-- **Share Name**: `PiBackup`
-- **Mount Point**: `/mnt/pibackup`
-- **Credentials File**: `/etc/smbcredentials_pibackup`
-  ```text
-  username=YOUR_SMB_USERNAME
-  password=YOUR_SMB_PASSWORD
-  ```
-  Set restrictive permissions: `sudo chmod 600 /etc/smbcredentials_pibackup`
-- **`/etc/fstab` Resilient Entry**:
-  ```fstab
-  //192.168.128.15/PiBackup /mnt/pibackup cifs credentials=/etc/smbcredentials_pibackup,uid=genmonpi,gid=genmonpi,file_mode=0777,dir_mode=0777,noperm,hard,echo_interval=60,vers=3.0,x-systemd.automount,_netdev 0 0
-  ```
-- **Mount Options Breakdown**:
-  - `uid=genmonpi,gid=genmonpi,file_mode=0777,dir_mode=0777,noperm`: Grants full unprivileged read/write access to user `genmonpi` and `root` without client-side permission blocks.
-  - `hard`: Pauses and retries I/O operations automatically during brief network drops instead of throwing immediate `Input/Output error`.
-  - `echo_interval=60`: Sends SMB keepalive echoes every 60 seconds to prevent Wi-Fi router session timeouts.
-  - `vers=3.0`: Enables SMB 3.0 protocol resilient handles so file writes survive temporary Wi-Fi reconnects.
-- **Reload Command**:
-  ```bash
-  sudo systemctl daemon-reload && sudo mount -a
-  ```
-
----
-
-### Production Backup Helper Scripts
-
-The repository includes production backup scripts in `/home/genmonpi/genmon/`:
-
-#### 1. Daily Genmon Data Archive (`/home/genmonpi/genmon/backup_to_mac.sh`)
-- Archives configuration files (`/etc/genmon`), database logs (`maintlog.json`), and sync states (`maint_sync_state.json`).
-- **Archive File**: `/mnt/pibackup/daily/genmon_daily_master.tar.gz`
-- **Integrity & Resiliency**: Pre-checks archive header with `tar -tzf`, auto-heals corrupt archives, and executes network retries (`retry_cmd`).
-- **Retention Policy**: Retains 7 daily snapshots (`genmon_daily_YYYY-MM-DD_HHMMSS.tar.gz`).
-- **Log File**: `/home/genmonpi/backup.log`
-- **Cron Schedule**: Daily at 4:00 AM
-  ```cron
-  0 4 * * * /home/genmonpi/genmon/backup_to_mac.sh
-  ```
-
-#### 2. Weekly Live SD Card Image (`/home/genmonpi/genmon/sdcard_backup_to_mac.sh`)
-- Creates a full live bootable system image: `/mnt/pibackup/genmon_sdcard_master.img`.
-- **Pre-Flight Corruption Health Checks**: MBR partition table inspection and loopback `e2fsck -n` ext4 superblock validation.
-- **Auto-Healing Replacement**: Automatic removal and re-initialization of corrupted/truncated master images.
-- **Stale Mount Auto-Recovery**: Detects stale mounts (`No such device` / `Stale file handle`) and executes lazy unmount (`umount -l -f`) and auto-remount.
-- **Network Hiccup Resiliency**: 3-attempt exponential backoff retry loop (`retry_cmd`).
-- **Non-Interactive Prompt Pipeline**: Automated `printf "${MASTER_IMG}\n\n\ny\n"` for `image-backup`.
-- **Signal Trap Cleanup**: Emergency handler (`trap cleanup EXIT INT TERM`) detaching orphan loop devices and temporary mounts.
-- **Disk Space & Package Audits**: Pre-flight verification of 10+ GB free space and system package dependencies (`kpartx`, `rsync`, `parted`, `bc`, `dosfstools`, `e2fsck`).
-- **Retention Policy**: Retains 4 weekly snapshots (`genmon_sdcard_YYYY-MM-DD_HHMMSS.img`).
-- **Log File**: `/home/genmonpi/sdcard_backup.log`
-- **Cron Schedule**: Weekly on Sunday at 4:00 AM
-  ```cron
-  0 4 * * 0 /home/genmonpi/genmon/sdcard_backup_to_mac.sh
-  ```
-
----
-
-## 5. Web UI Optimization & FOUC Prevention
-
-To prevent **Flash of Unstyled Content (FOUC)** when loading the Genmon web interface (such as a white flash before dark mode loads):
-- **CSS Preloading**: Core stylesheet `css/genmon.css` is preloaded via `<link rel="preload" href="css/genmon.css" as="style">` in template `<head>` sections.
-- **Visibility Transition**: Inline CSS and DOM ready scripts enforce `visibility: hidden; opacity: 0;` until stylesheets and theme initialization complete, fading in smoothly via `.fouc-ready` class.
-
----
-
-## 6. Manual Backup Execution & Live Terminal Console
-
-A dedicated **Run Backups** page (`#backups`) in the left navigation sidebar allows triggering manual backup routines and viewing real-time terminal output:
-- **Tabbed Interface**:
-  - 📦 **Daily Backup Routine** Tab (`backup_to_mac.sh`)
-  - 💾 **Weekly SD Card Routine** Tab (`sdcard_backup_to_mac.sh`)
-- **Live Execution Console**: High-tech green streaming output window (`#br-console`) with auto-scrolling line updates.
-- **Interactive Controls**: ▶ **Run Backup**, 🛑 **Stop Execution**, and **Clear Console** buttons.
-- **Backend Runner**: Flask `BackupRunner` class executing non-blocking background threads with `subprocess.Popen` line-by-line output streaming.
-
----
-
-## 7. Web UI Script & Add-on Log Viewer
-
-A dedicated **Script Logs** page (`#scriptlogs`) in the left navigation sidebar allows real-time inspection of background automated scripts and add-on services:
-- **Monitored Logs**:
-  - 🔄 **Maintenance Sync Log** (`/etc/genmon/genmaint_sync.log`)
-  - 📦 **Daily Backup Log** (`/home/genmonpi/backup.log`)
-  - 💾 **Weekly SD Card Log** (`/home/genmonpi/sdcard_backup.log`)
-- **Interactive Features**:
-  - Status badges on tab buttons (`OK`, `WARN`, `ERROR`).
-  - **× Clear Log** button with safety confirmation modal to truncate logs on disk.
-  - **Acknowledge Errors** button to clear alert badges on the main Dashboard **Script Logs Status** tile.
-  - Built-in search filtering and syntax highlighting (errors in **Red**, warnings in **Yellow**, normal info in **Green**).
-
----
-
-## 7. GitHub Fork & Git Workflow
-
-The project is maintained on a personal GitHub fork: **[`wizofoz244/genmon`](https://github.com/wizofoz244/genmon)**.
-
-### Remote Configuration
-- `origin`: `https://github.com/wizofoz244/genmon.git` (Personal Fork)
-- `upstream`: `https://github.com/jgyates/genmon.git` (Official Repository)
-
-### Mac to Raspberry Pi Deployment Workflow
-
-1. **On Mac**: Commit and push changes:
-   ```bash
-   git add .
-   git commit -m "Description of updates"
-   git push origin master
-   ```
-
-2. **On Raspberry Pi**: Pull updates:
-   ```bash
-   cd ~/genmon
-   git pull origin master
-   ```
-
-3. **Syncing Upstream Genmon Updates**:
-   ```bash
-   git fetch upstream
-   git merge upstream/master
-   git push origin master
-   ```
-
----
-
-## 8. Raspberry Pi Systemd Service Deployment
-
-### System Information
-- **User**: `genmonpi`
-- **Path**: `/home/genmonpi/genmon`
-- **Config Directory**: `/etc/genmon`
-
-### Systemd Unit File (`/etc/systemd/system/genmaint_sync.service`)
-
+### Credentials File (`/etc/smbcredentials`)
 ```ini
-[Unit]
-Description=Genmon Service Journal Sync Addon
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/python3 /home/genmonpi/genmon/addon/genmaint_sync.py -c /etc/genmon
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
+username=pi
+password=YOUR_SECURE_PASSWORD
+domain=WORKGROUP
 ```
+Permissions: `sudo chmod 600 /etc/smbcredentials`
 
-### Management Commands
+---
+
+### Daily Genmon Backup Script (`/home/genmonpi/genmon/backup_to_mac.sh`)
+- **Execution**: Daily at 4:00 AM via Cron.
+- **Archive Contents**: `/etc/genmon/*`, `/home/genmonpi/genmon/conf/*`, `maintlog.json`, `outage.txt`.
+- **Retention**: Keeps the last 14 daily archives, purging older archives automatically.
+- **Network Resilience**: 3-stage exponential backoff retry loop with automatic stale mount unmount/remount recovery.
+
+---
+
+### Weekly SD Card Image Backup Script (`/home/genmonpi/genmon/sdcard_backup_to_mac.sh`)
+- **Execution**: Every Sunday at 4:00 AM via Cron.
+- **Image Utility**: Utilizes `image-backup` to create direct, compressed, shrink-fit `.img` files.
+- **Integrity Validation**: Runs loopback `e2fsck -fy` filesystem superblock check on newly created images to guarantee restoration integrity.
+- **Auto-Replacement**: If a backup is corrupted, automatically creates a fresh replacement image.
+- **Retention**: Maintains current backup plus previous generation fallback.
+
+---
+
+## 5. Web UI Manual Backups Console
+
+Accessible from the top navigation bar under **Backups**:
+- **Live Output Stream**: Shows real-time script output using server-sent chunks.
+- **Tabbed Routines**: Run either the **Daily Backup Routine** or **Weekly SD Card Routine** on demand.
+- **Disk & Mount Pre-Checks**: Inspects CIFS mount status and available disk space before starting image creation.
+
+---
+
+## 6. Web UI Optimization & FOUC Prevention
+
+- **Single-Page Application Router**: Uses `history.replaceState` for zero-flicker client-side routing.
+- **Flash of Unstyled Content (FOUC) Prevention**:
+  - Inlines critical CSS directly within `index.html`.
+  - Hides main container until stylesheet `load` event fires.
+- **Content Security Policy (CSP)**:
+  ```text
+  default-src 'self' https: http: data: blob: 'unsafe-inline' 'unsafe-eval';
+  style-src 'self' https: http: data: blob: 'unsafe-inline';
+  ```
+- **Asset Versioning**: Uses query parameters (`?v=2026.1`) to guarantee browser cache eviction across updates.
+
+---
+
+## 7. Script Logs Viewer & Dashboard Status Tile
+
+### Script Logs Navigation & Viewer
+- **URL**: `/#/logs`
+- **Dashboard Status Tile**:
+  - Live status indicator displaying aggregate error / warning health across all background scripts.
+  - **Tile Click Navigation**: Clicking the Script Logs tile directly opens the Script Logs page.
+- **Tabs Supported**:
+  1. `Network Watchdog` (`/var/log/net-watchdog.log`)
+  2. `Maint Log Sync` (`/etc/genmon/genmaint_sync.log`)
+  3. `Daily Backup` (`/home/genmonpi/backup.log`)
+  4. `SD Card Backup` (`/home/genmonpi/sdcard_backup.log`)
+- **Error Highlighting**: Automatically detects and highlights `[ERROR]` and `[WARN]` entries.
+- **Error Acknowledgment & Clear Log**: Provides buttons to acknowledge warnings or truncate log files.
+
+---
+
+## 8. Wi-Fi Band Detection (2.4 GHz / 5 GHz / 6 GHz)
+
+- **Backend**: `MyPlatform.GetWiFiBand` in `genmonlib/myplatform.py` parses `iw dev <iface> link` (or `iwconfig`) to determine operating frequency.
+- **Dashboard Signal Tile**: Displays operating frequency band alongside signal quality (e.g. `-65 dBm (2.4 GHz)`).
+- **Platform Stats Modal**: Includes active Wi-Fi band in system status diagnostics.
+
+---
+
+## 9. Wi-Fi Reliability & 2.4 GHz Band Locking
+
+Genmon requires a stable Wi-Fi connection with the generator controller. 2.4 GHz provides superior range and penetration through outdoor generator enclosures.
+
+### Locking Wi-Fi to 2.4 GHz Only
+
+#### NetworkManager (`nmcli` - Raspberry Pi OS Bookworm)
 ```bash
-# Reload systemd configuration
-sudo systemctl daemon-reload
-
-# Enable service on boot
-sudo systemctl enable genmaint_sync.service
-
-# Start / Restart service
-sudo systemctl start genmaint_sync.service
-sudo systemctl restart genmaint_sync.service
-
-# View status
-sudo systemctl status genmaint_sync.service
-
-# View real-time logs
-sudo tail -f /etc/genmon/genmaint_sync.log
-sudo journalctl -u genmaint_sync.service -f
+# Restrict connection to 2.4 GHz 802.11bg band
+sudo nmcli connection modify "YOUR_SSID" 802-11-wireless.band bg
+sudo nmcli connection modify "YOUR_SSID" 802-11-wireless.channel 0
+sudo nmcli connection up "YOUR_SSID"
 ```
+
+#### `wpa_supplicant.conf` (Raspberry Pi OS Bullseye)
+```text
+network={
+    ssid="YOUR_SSID"
+    psk="YOUR_PASSWORD"
+    freq_list=2412 2417 2422 2427 2432 2437 2442 2447 2452 2457 2462
+}
+```
+
+---
+
+## 10. Network Watchdog & Auto-Reboot (`net_watchdog.sh`)
+
+A production-grade network watchdog script (`/home/genmonpi/genmon/net_watchdog.sh`) running every 3 minutes via Cron.
+
+### Key Protections
+- **Phase 1**: Soft network stack restart (`nmcli` / `wpa_supplicant`).
+- **Phase 2**: USB bus controller rebind if USB dongle locks up.
+- **Phase 3**: Graceful system reboot if unreachable after 2 soft resets (~6 mins).
+- **Wi-Fi Power Save**: Disables power management (`iw dev wlan0 set power_save off`).
+- **Data Protection**: Safely stops `genmon.service` and flushes buffers prior to reboot.
+- **SD Card Protection**: Limits consecutive reboots to `MAX_CONSECUTIVE_REBOOTS=3`.
+
+```cron
+*/3 * * * * /home/genmonpi/genmon/net_watchdog.sh
+```
+
+---
+
+## 11. Tailscale Funnel & Remote HTTPS Deployment
+
+Genmon offers first-class support for Tailscale HTTPS and Tailscale Funnel:
+
+### Certificate Modes & Auto-Renewal
+- **`cert_mode = tailscale`**: Automatically obtains and provisions Let's Encrypt certificates using the host's `tailscale cert` command.
+- **90-Day Lifecycle & Auto-Renewal**: Because Tailscale/Let's Encrypt certificates have a strict 90-day validity period, Genmon runs a background **Certificate Renewal Watchdog** (checked every 12 hours) that automatically executes `tailscale cert` when `< 30 days` remain.
+- **3-Day Expiration Push & Email Alert**: If any active certificate is within **3 days** of expiring, the watchdog automatically dispatches an urgent **Web Push Notification** to all subscribed devices and an **Email Alert** via `mymail` with renewal instructions.
+- **Manual Regeneration UI**: A dedicated **`[ 🔄 Renew / Regenerate Certificate ]`** action button in **Settings → Security Settings** allows admins to trigger immediate renewal or update network SAN lists on demand with live remaining-day badges on each mode card.
+- **Tailscale Funnel**: Listens on public port `443` and proxies traffic to `https+insecure://127.0.0.1:8443`.
+
+```bash
+sudo tailscale funnel --bg https+insecure://127.0.0.1:8443
+```
+
+---
+
+## 12. PWA Web Push Notification System (`addon/genwebpush.py`)
+
+A standalone push notification daemon and PWA service worker integrating real-time alerts across iOS (Safari PWA), macOS, Android, and Windows.
+
+### Key Capabilities & Architecture
+- **VAPID RFC 8292 Key Generation**: Auto-generates and persists NIST P-256 EC VAPID keypairs in `genwebpush.conf`.
+- **Apple APNs Compatible JWS**: Formats raw 64-byte `r || s` ES256 signatures and strict `vapid t=..., k=...` headers for Apple Web Push endpoints (`web.push.apple.com`).
+- **AES-128-GCM Payload Encryption**: Uses `http_ece` and `pywebpush` for standard encrypted web push payloads.
+- **Dynamic Device Management**: Automatically recognizes device models (iPhone, iPad, Mac, Android, Windows) and allows editing custom device names in the UI.
+- **Real-Time Generator Event Triggers**:
+  - 🚨 Generator Alarms (with specific fault code extraction)
+  - ⚡ Utility Outages & Restorations
+  - 🔄 Scheduled Exercise Start & Stop
+  - 🟢 Generator Running & Stopped State Transitions
+  - 📴 Switch Changes to OFF or MANUAL
+  - ⛽ Fuel Level Warnings
+  - 🌡️ Raspberry Pi Hardware Health (High Temp / Low Voltage)
+  - ℹ️ Software Updates & System Notices
+
+### UI Management
+- Click **🔔 Push Alert Settings** in navigation to subscribe devices, customize device labels, set notification preferences, and configure the Apple APNs VAPID contact email.
+
+---
+
+## 13. Web UI Security & Session Management
+
+- **Global Session Revocation ("Logout All Devices")**:
+  - Available under the **Security** tab in settings.
+  - Automatically regenerates the server session secret key, immediately revoking all active sessions across all devices.
+- **Secure Cookie Expiration**:
+  - Logout clears Flask session variables and forces `Set-Cookie` expiration with `Max-Age=0`.
+- **Passkey / WebAuthn**:
+  - Supports passwordless FIDO2 / WebAuthn passkey authentication.
+- **MFA & Backup Codes**:
+  - Time-based One-Time Password (TOTP) MFA with one-time emergency backup recovery codes.
+
+---
+
+## 14. Testing Framework & Continuous Integration
+
+Genmon includes a comprehensive unit and integration test suite organized under `tests/`:
+
+```
+tests/
+├── conftest.py                       # Common hardware mock setup & logger isolation
+├── unit/
+│   ├── test_wifi_band.py             # Wi-Fi band derivation & GUI tile integration
+│   ├── test_net_watchdog.py          # Watchdog bash syntax, IP regex & log endpoints
+│   ├── test_webpush.py               # VAPID cryptography, Apple APNs & push payloads
+│   ├── test_pwa_security.py          # Session security & Logout All Devices
+│   └── test_genmaint_sync.py         # Controller log parsing & engine run hour math
+└── integration/
+    ├── test_modbus_controller_integration.py # Simulated Modbus -> Evolution controller
+    ├── test_genserv_web_integration.py       # Flask Web API endpoints & access control
+    └── test_notification_integration.py     # GenNotify event dispatcher pipeline
+```
+
+### Running Tests
+Execute the entire test suite via Python's native test runner:
+```bash
+python3 -m unittest discover -s tests -p "test_*.py"
+```
+
+### Standalone Backward-Compatible Runners
+```bash
+python3 test_wifi_band.py
+python3 test_net_watchdog.py
+python3 addon/test_genmaint_sync.py
+```
+
+### Continuous Integration (GitHub Actions)
+- `.github/workflows/test.yml`: Runs the automated test suite across Python 3.9, 3.10, 3.11, and 3.12 on every push and pull request.

@@ -957,6 +957,7 @@ class PowerZonePro(GeneratorController):
                     self.ModBus.ProcessTransaction(
                         RegisterList[REGISTER], RegisterList[LENGTH] // 2
                     )
+                    self.DelayBetweenFrames()
                     if (
                         localSyncError != self.ModBus.ComSyncError
                         or localTimeoutCount != self.ModBus.ComTimoutError
@@ -986,6 +987,7 @@ class PowerZonePro(GeneratorController):
                     self.ModBus.ProcessTransaction(
                         RegisterList[REGISTER], RegisterList[LENGTH] // 2
                     )
+                    self.DelayBetweenFrames()
                     if (
                         localSyncError != self.ModBus.ComSyncError
                         or localTimeoutCount != self.ModBus.ComTimoutError
@@ -3231,16 +3233,18 @@ class PowerZonePro(GeneratorController):
             """
             if self.SystemInAlarm():
                 return "ALARM"
-            elif ServiceDue:
-                return "SERVICEDUE"
             elif IsExercising:
                 return "EXERCISING"
             elif IsRunning and SwitchState == "auto":
                 return "RUNNING"
             elif IsRunning and SwitchState == "manual":
                 return "RUNNING-MANUAL"
+            elif IsStopped and SwitchState == "off":
+                return "OFF"
             elif SwitchState == "manual":
                 return "MANUAL"
+            elif ServiceDue:
+                return "SERVICEDUE"
             elif SwitchState == "auto":
                 return "READY"
             elif SwitchState == "off":

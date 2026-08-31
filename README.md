@@ -24,7 +24,7 @@ The project is written mostly in python and has been tested with a Raspberry Pi 
 ## Functionality
 The software supports the following features:
 
-* Monitoring of the generator to to detect and report the following:
+* Monitoring of the generator to detect and report the following:
     * Maintenance, Start / Stop and Alarm Logs (No Maintenance log exist on Nexus or Industrial Gens)
     * Display Generator Serial Number
     * Generator warnings and faults
@@ -36,9 +36,9 @@ The software supports the following features:
             - Relay Output State: (Starter, Fuel Relay, Battery Charger, others for liquid cooled models)
             - Engine RPM, Hz and Voltage Output
             - Generator Controller Time
-            - Line State
-                - Utility Voltage Level
-                - Transfer Switch State (Evolution liquid cooled model and Industrial Gens with HTS/MTS/STS Transfer Switches models only)
+        * Line State
+            - Utility Voltage Level
+            - Transfer Switch State (Evolution liquid cooled model and Industrial Gens with HTS/MTS/STS Transfer Switches models only)
         * Outage Information
             - Time since last outage
             - Current Utility Voltage
@@ -48,31 +48,27 @@ The software supports the following features:
             - Hours till next scheduled service
             - Total Run Hours
             - Firmware and Hardware versions
-        * Various statics from the generator monitor including time since program launched,
+        * Various statistics from the generator monitor including time since program launched,
               MODBUS / serial communications health and program health.
-* Email notification of :
-    - Engine state change
-    - Switch state change
-    - Critical or Warning messages from the generator
-- Web based application for viewing status of the generator
-- Limited and Full Rights login for web interface
-- SMS notifications of Generator state and power outages (via Twilio SMS API or Expansion Cellular Modem)
-- Push notifications (via pushover.net, slack)
-- CallMeBot notifications for whatsapp and telegram
-- syslog logging of generator events
-- Command Line application (all the functionality of email).
-- Ability to set exercise time
-- Ability to set generator time
-- Ability to start, stop, exercise and start / active the transfer switch (i.e. power your house off the generator) remotely.
-- Power, Current output on selected models
-- Fuel consumption on selected models
-- MQTT integration for third party home automation support
-- Service Journal for logging maintenance, repair, etc
-- Backup configuration files
-- Enhanced Exercise options for Evolution/Nexus controller (Exercise Transfer Switch)
-- Firmware update notification for Evolution 2.0
-- SNMP monitoring
-- Optional LDAP authentication to web interface
+* Native PWA Web Push Notifications (with RFC 8292 VAPID encryption and Apple APNs / Safari PWA support for iOS, macOS, Android, Windows)
+* Wi-Fi Band Indicator (2.4 GHz, 5 GHz, 6 GHz) on dashboard signal tile and platform diagnostics
+* Script Logs Viewer (`/#/logs`) with live error highlighting, acknowledgment, and direct dashboard tile click navigation
+* Manual Backups Console with live streaming terminal output for Daily Archives and Weekly SD Card Image routines
+* Enhanced Session Security with global "Logout All Devices" session revocation, Passkey / WebAuthn, and MFA backup codes
+* Email notification of Engine state, Switch state, and Alarm conditions
+* Web based application for viewing status of the generator
+* Limited and Full Rights login for web interface
+* SMS notifications of Generator state and power outages (via Twilio SMS API or Expansion Cellular Modem)
+* Push notifications (via pushover.net, slack)
+* CallMeBot notifications for whatsapp and telegram
+* syslog logging of generator events
+* Command Line application (all the functionality of email).
+* Ability to set exercise time and generator time remotely
+* Remote start, stop, exercise, and transfer switch activation
+* Power, Current output and fuel consumption on selected models
+* MQTT integration for third party home automation support
+* Service Journal for logging maintenance, repair, etc.
+* Comprehensive Unit and Integration Test Suite (`python3 -m unittest discover -s tests -p "test_*.py"`)
 
 ![Generator Monitor Web Interface](https://raw.githubusercontent.com/jgyates/genmon/master/Diagrams/Web_UI_Status.png)
 
@@ -82,7 +78,7 @@ This project is free to use under the posted license agreement. It was written a
 [![paypal](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=8Z4TSR22RLMWQ&lc=US&item_name=jgyates&item_number=jgyates&currency_code=USD&bn=PP%2dDonationsBF%3abtn_donate_LG%2egif%3aNonHosted)
 
 ## System Requirements
-- Genmon 2.0 and higher requires Python 3.9 or higher. Version 1.20.00 could use Python 3.7 or higher. The "bullseye" and higher version of the Raspberry Pi OS support Python 3.9 and higher. The "buster" version supported python 3.7.
+- Genmon 2.0 and higher requires Python 3.9 or higher.
 - A linux based operating system (mostly for file system storage location)
 - A TCP/IP network connection (either wired or wireless) for communicating generator status
 
@@ -90,57 +86,39 @@ This project is free to use under the posted license agreement. It was written a
 While you have the option of purchasing all of the components individually, there is an option for purchasing custom designed hardware that will simplify the hardware assembly process. More info is available [here](https://github.com/jgyates/genmon/wiki/2--Hardware#custom-hat).
 
 ## Testing
-This software was written by one person with full time access to one generator. The primary model used for testing and development is a liquid cooled model with an evolution controller. The software was written with every intention of working on liquid and air-cooled models with the Evolution or Nexus controller however the author has not tested all scenarios. Testing has been performed with both Evolution and Nexus Controllers (air cooled and liquid cooled) with help of the community, however not all firmware versions and models have been tested.
-
-In an effort to expand compatibility and functionality, from time to time I may use the [issue tracker](https://github.com/jgyates/genmon/issues) of this project to request input from people using the software. This input will will allow greater compatibility and new features to be added.
+The repository includes a comprehensive automated test framework covering unit and integration tests:
+```bash
+python3 -m unittest discover -s tests -p "test_*.py"
+```
+Continuous integration is managed via GitHub Actions across Python 3.9–3.12.
 
 ## Placement of your Raspberry Pi
-If you have a large generator, the placement of your Raspberry Pi could be important due to [EMI](https://en.wikipedia.org/wiki/Electromagnetic_interference). Larger generators can produce more EMI when starting. For example a 48kw diesel generator may generate enough EMI to cause CRC errors when the generator starts if the Raspberry Pi enclosure is close to the engine. If you see CRC errors, check the validity of your cable. The errors may be caused by vibration of loose molex connectors in your cable. Also, if the Raspberry Pi enclosure is moved away from the engine and closer to the controller, this will likely reduce EMI if that is causing any CRC errors. EMI may not be an issue with smaller liquid cooled generators. There are several ways to resolve EMI issues however the best solution is dependent on your particular site needs (generator, how much space you need for your Pi, how much space you have available, etc). The project [wiki](https://github.com/jgyates/genmon/wiki/2:-Hardware) has information regarding a typical enclosure for the Raspberry Pi, however the example enclosure is not RF shielded.
+If you have a large generator, the placement of your Raspberry Pi could be important due to [EMI](https://en.wikipedia.org/wiki/Electromagnetic_interference). Larger generators can produce more EMI when starting. If you see CRC errors, check the validity of your cable or move the Raspberry Pi enclosure further away from the engine block.
 
 ## Connectivity
 This application was written to be agnostic of the underlying network media (i.e. WiFi, Ethernet, etc). Testing and development was performed with WiFi with access points connected to an uninterruptible power supply (UPS) so connectivity is not lost when power is transferred from utility to the generator.
 
-**Note:** It is not recommended to expose the web interface used with this project to the internet without serious thought regarding security. If you want to access genmon remotely I would recommend using a VPN (Virtual Private Network) to access your private network. Genmon uses the python Flask library's internal web server to display web pages for this project. This is suitable for low traffic situations however it is not a good idea to expose this interface to the internet unprotected. Protecting from unwanted access using a username and password is available in this project, however there is still risk involved as the Flask web server is not intended for high traffic situations and would likely fail with a Denial of Service attack.  Raspberry pi's in general are not hardened by default like most public facing web servers. Exposing any computer to the internet has similar security issues that would need to be considered. There [have been instances](https://github.com/jgyates/genmon/issues/702) where hacking has occurred. ***Exposing genmon directly to the internet is not recommended***.
+For automated network recovery and auto-reboot resilience during router/AP disconnects, see `net_watchdog.sh` and [Section 10 of the Deployment Guide](DEPLOYMENT_GUIDE.md#10-network-watchdog--auto-reboot-net_watchdogsh).
+
 ## Controller Selection
-Gemmon supports several type of generator controllers. The following table shows each controller supported and how to configure genmon to support each controller.
+Genmon supports several types of generator controllers. The following table shows each controller supported and how to configure genmon to support each controller.
 
 | Controller | Description | Setup |
 |---|---|---|
-| Evolution 1.0 Air Cooled, Evolution 2.0 Air Cooled, Evolution Liquid Cooled, [Evolution Liquid Cooled 4.5L](https://github.com/jgyates/genmon/wiki/Appendix-D-Known-Issues#18-liquid-cooled-45l-model-serial-data-rate), Nexus Air Cooled, Nexus Liquid Cooled, Generac PowerPact, Generac Synergy and [Power Zone 200](https://github.com/jgyates/genmon/wiki/Appendix-T-Generac-Power-Zone-200-Information) | Generac Residential | Use the defaul setting. Settings -> Advanced -> Controller Type -> evolution_nexus |
+| Evolution 1.0 / 2.0 Air Cooled, Evolution Liquid Cooled, Nexus Air Cooled, Nexus Liquid Cooled, Generac PowerPact | Generac Residential | Default setting: Settings -> Advanced -> Controller Type -> evolution_nexus |
 | [Generac H-100 and G-Panel](https://github.com/jgyates/genmon/wiki/Appendix-G-Generac-H-100,-G-Panel-and-PowerZone-Controllers) | Industrial Generac | Settings -> Advanced -> Controller Type -> h_100 |
 | [Generac Power Zone Pro](https://github.com/jgyates/genmon/wiki/Appendix-G-Generac-H-100,-G-Panel-and-PowerZone-Controllers) | Industrial Generac | Settings -> Advanced -> Controller Type -> powerzone_pro |
-| [Generac Power Zone 410](https://github.com/jgyates/genmon/wiki/Appendix-G-Generac-H-100,-G-Panel-and-PowerZone-Controllers) | Industrial Generac | Settings -> Advanced -> Controller Type -> custom, then Settings -> Advanced -> Custom Controller Config File -> Power_Zone_410.json |
-| [Briggs & Stratton GC-1032](https://github.com/jgyates/genmon/wiki/Appendix-P-Briggs-and-Stratton-Controller-Information) | Residential | Settings -> Advanced -> Controller Type -> custom, then Settings -> Advanced -> Custom Controller Config File -> Briggs_Stratton_GC-1032.json |
-| ComAP Controller | [ComAP IG-NT](https://www.comap-control.com/products/controllers/paralleling-gen-set-controllers/inteligen/inteligen-nt/) | Settings -> Advanced -> Controller Type -> custom, then Settings -> Advanced -> Custom Controller Config File -> ComAP.json|
-| Deepsea | [Deepsea](https://www.deepseaelectronics.com/genset)| Settings -> Advanced -> Controller Type -> custom, then Settings -> Advanced -> Custom Controller Config File -> Deepsea_controller.json|
-| Kohler APM603| [Product Page](https://powersystems.kohlerenergy.com/en/product/apm603)| Settings -> Advanced -> Controller Type -> custom, then Settings -> Advanced -> Custom Controller Config File -> Kohler_APM603.json |
-| [MEBAY DCxx  (DC04-DC90)](https://github.com/jgyates/genmon/wiki/Appendix-R---MEBAY-Controller-with-RS-485) | [MEBAY DC4x, DC5x, DC6x, DC7x, DC8x and DC9x](https://mebay.cn/#/index/product_display/list?sign=product_display&id=39&level=1&random=7)| Settings -> Advanced -> Controller Type -> custom, then Settings -> Advanced -> Custom Controller Config File -> MEBAY_DCxx.json.json |
-| SmartGen HGM40x0 | [SmartGen HGM40x0 Series](https://www.smartgen-america.com/catalog/products/genset-controllers/)| Settings -> Advanced -> Controller Type -> custom, then Settings -> Advanced -> Custom Controller Config File -> SmartGen_HGM4000.json |
-| [Basler DGC 2020HD](https://github.com/jgyates/genmon/wiki/Appendix-U-Basler-DGC-2020HD-Controller) | [Product Page](https://www.basler.com/product/dgc-2020hd-digital-genset-controller/)| Settings -> Advanced -> Controller Type -> custom, then Settings -> Advanced -> Custom Controller Config File -> Basler_DGC_2020HD.json |
-
-***NOTE:*** Some controllers have specific settings related to the serial data or modbus addressing. Please see the links in the table above for more info. For controller that use the Custom Controller Config File in the table above, see [this wiki page](https://github.com/jgyates/genmon/wiki/Appendix-N-Genmon-Supporting-Other-Controller-Types) for more info on creating new custom config files and the format of the files.
-
-## Setting Up Your Raspberry Pi (Serial Port)
-Since there are several version of the raspberry Pi out and also several options regarding the operating system, I will leave this section somewhat minimal. I used a Raspberry Pi 3 with [Raspbian](https://www.raspberrypi.org/downloads/raspbian/) Lite. There are many resources on the web for setting up a Raspberry Pi so I will only include links for setting up the serial port. The Linux device name of the serial port changed or at least the symbolic link changed starting with the Raspberry Pi 3 from /dev/ttyAMA0 to /dev/serial0 so if you are using the on board serial port you will want to validate the device name and make sure genmon.conf reflects the serial device name of your Raspberry Pi and Linux distribution. The following two links are helpful in setting up the serial port on the Raspberry Pi:
-
-[General Setup of the serial port for a Raspberry Pi](http://elinux.org/RPi_Serial_Connection)
-
-[An updated serial port setup instructions based on the Raspberry Pi 3](http://spellfoundry.com/2016/05/29/configuring-gpio-serial-port-raspbian-jessie-including-pi-3/)
-
-One important step is to validate your serial port is working properly. You can validate the serial port is working properly by using the program serialtest.py in this repository. To validate your serial port connect the RS-232 transmit to RS-232 receive and follow the instructions in the software section on [serialtest.py](https://github.com/jgyates/genmon/wiki/1:-Software-Overview#otherappsserialtestpy-optional). Also, you can validate your cable by connecting your cable to your serial port and connecting transmit to receive at the far end of the cable so you will be looping back through your cable, then repeat the serialtest.py test.
-
-## Demo videos
-<a href="http://www.youtube.com/watch?feature=player_embedded&v=cn91Hplkl0w
-" target="_blank"><img src="http://img.youtube.com/vi/cn91Hplkl0w/0.jpg"
-alt="Genmon Demo" width="240" height="180" border="10" /></a>
-
-* [Video Series on using Genmon with the Briggs and Stratton GD-1030](https://www.youtube.com/@genmonbriggs9033/videos)
-* [Genmon Setup Walkthrough](https://www.youtube.com/watch?v=w0DvUAiXSmU&ab_channel=HandyDadTV)
-* [Genmon with Evolution 2.0](https://www.youtube.com/watch?v=Bi7b8oKWaXA&ab_channel=RITech)
-* [Genmon and Pintsize.me board setup](https://www.youtube.com/watch?v=EQ5DyJKFBa8&ab_channel=98grand5point9)
-* [Run Genmon in a docker image](https://www.youtube.com/watch?v=QVw4uX2XK-Y&ab_channel=BigBearTechWorld)
-* [Setup using Genmon and Pintsize.me](https://www.yourwarrantyisvoid.com/2022/02/15/generators-and-open-source-part-2-always-a-better-mousetrap/)
-* [Another Pintsize.me setup](https://blog.networkprofile.org/monitoring-generac-generator-with-raspberry-pi-and-om3-fiber/)
+| [Generac Power Zone 410](https://github.com/jgyates/genmon/wiki/Appendix-G-Generac-H-100,-G-Panel-and-PowerZone-Controllers) | Industrial Generac | Custom Controller Config -> Power_Zone_410.json |
+| [Briggs & Stratton GC-1032](https://github.com/jgyates/genmon/wiki/Appendix-P-Briggs-and-Stratton-Controller-Information) | Residential | Custom Controller Config -> Briggs_Stratton_GC-1032.json |
+| ComAP Controller | [ComAP IG-NT](https://www.comap-control.com/products/controllers/paralleling-gen-set-controllers/inteligen/inteligen-nt/) | Custom Controller Config -> ComAP.json |
+| Deepsea | [Deepsea](https://www.deepseaelectronics.com/genset) | Custom Controller Config -> Deepsea_controller.json |
+| Kohler APM603 | [Product Page](https://powersystems.kohlerenergy.com/en/product/apm603) | Custom Controller Config -> Kohler_APM603.json |
+| [MEBAY DCxx (DC04-DC90)](https://github.com/jgyates/genmon/wiki/Appendix-R---MEBAY-Controller-with-RS-485) | [MEBAY Controllers](https://mebay.cn/#/index/product_display/list?sign=product_display&id=39&level=1&random=7) | Custom Controller Config -> MEBAY_DCxx.json |
+| SmartGen HGM40x0 | [SmartGen Series](https://www.smartgen-america.com/catalog/products/genset-controllers/) | Custom Controller Config -> SmartGen_HGM4000.json |
+| [Basler DGC 2020HD](https://github.com/jgyates/genmon/wiki/Appendix-U-Basler-DGC-2020HD-Controller) | [Product Page](https://www.basler.com/product/dgc-2020hd-digital-genset-controller/) | Custom Controller Config -> Basler_DGC_2020HD.json |
 
 # Documentation
 * [Genmon Project Wiki](https://github.com/jgyates/genmon/wiki)
+* [Complete Setup, Backup & Deployment Guide](DEPLOYMENT_GUIDE.md)
+* [Network Watchdog Documentation](README_net_watchdog.md)
+* [Service Journal Sync Addon Documentation](addon/README_genmaint_sync.md)

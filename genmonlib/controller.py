@@ -18,6 +18,7 @@ import datetime
 import json
 import os
 import sys
+import tempfile
 import threading
 import time
 import itertools
@@ -307,6 +308,8 @@ class GeneratorController(MySupport):
                     self.bUseRaspberryPiCpuTempGauge = False
                     self.bUseLinuxWifiSignalGauge = False
                     self.bWifiIsPercent = False
+                    self.bUsePiPowerMonitorGauge = False
+                    self.PiPowerLogPath = "/var/log/pi_power_monitor.log"
                     self.PreferredNetworkAdapter = None
                 else:
                     self.bUseRaspberryPiCpuTempGauge = self.config.ReadValue(
@@ -317,6 +320,12 @@ class GeneratorController(MySupport):
                     )
                     self.bWifiIsPercent = self.config.ReadValue(
                         "wifiispercent", return_type=bool, default=False
+                    )
+                    self.bUsePiPowerMonitorGauge = self.config.ReadValue(
+                        "use_pi_power_monitor", return_type=bool, default=True
+                    )
+                    self.PiPowerLogPath = self.config.ReadValue(
+                        "pi_power_log_path", default="/var/log/pi_power_monitor.log"
                     )
                     self.PreferredNetworkAdapter = self.config.ReadValue(
                         "preferred_network_adapter", default=None
@@ -617,14 +626,7 @@ class GeneratorController(MySupport):
             return
         time.sleep(0.25)
 
-        if (
-            not self.ControllerSelected == None
-            or not len(self.ControllerSelected)
-            or self.ControllerSelected == "generac_evo_nexus"
-        ):
-            MaxReg = 0x400
-        else:
-            MaxReg = 0x2000
+        MaxReg = 0x3000
         self.InitCompleteEvent.wait()
 
         if self.IsStopping:
@@ -683,7 +685,7 @@ class GeneratorController(MySupport):
                                 self.GetEngineState(),
                             )
                         )
-                        RegistersUnderTest[Register] = Value  # update the value
+                        RegistersUnderTest[Register] = NewValue  # update the value
 
                 msgbody = "\n"
                 try:
@@ -2290,7 +2292,15 @@ class GeneratorController(MySupport):
             LogFile = self.GetSensorLogFile(sensor_name)
             cache_key = self.GetSensorCacheKey(sensor_name)
             if not os.path.isfile(LogFile):
-                return []
+                # If sensor is Pi Voltage and power monitor log exists, populate cache from power log history
+                if sensor_name.lower() in ("pi voltage", "core voltage") and self.Platform and self.Platform.HasPiPowerLog(getattr(self, "PiPowerLogPath", None)):
+                    with self.SensorLogLock:
+                        if cache_key not in self.SensorLogLists or not len(self.SensorLogLists[cache_key]):
+                            hist = self.Platform.GetPiPowerLogHistory(getattr(self, "PiPowerLogPath", None), minutes=0, max_entries=self.MaxSensorLogEntries)
+                            if hist:
+                                self.SensorLogLists[cache_key] = hist
+                if cache_key not in self.SensorLogLists or not len(self.SensorLogLists[cache_key]):
+                    return []
 
             with self.SensorLogLock:
                 CachedList = self.EnsureSensorCache(cache_key, LogFile)
@@ -2315,7 +2325,12 @@ class GeneratorController(MySupport):
     def EnsureSensorCache(self, cache_key, LogFile):
         if cache_key in self.SensorLogLists and len(self.SensorLogLists[cache_key]):
             return self.SensorLogLists[cache_key]
-        TempList = self._ParseSensorLogFile(LogFile)
+        if os.path.isfile(LogFile):
+            TempList = self._ParseSensorLogFile(LogFile)
+        else:
+            TempList = []
+        if not len(TempList) and cache_key.lower() in ("pi_voltage", "core_voltage") and self.Platform and self.Platform.HasPiPowerLog(getattr(self, "PiPowerLogPath", None)):
+            TempList = self.Platform.GetPiPowerLogHistory(getattr(self, "PiPowerLogPath", None), minutes=0, max_entries=self.MaxSensorLogEntries)
         if len(TempList) > self.MaxSensorLogEntries:
             TempList = self.DecimateList(TempList, self.MaxSensorLogEntries)
         self.SensorLogLists[cache_key] = TempList
@@ -2419,6 +2434,8 @@ class GeneratorController(MySupport):
             names = []
             if self.bUseRaspberryPiCpuTempGauge:
                 names.append("CPU Temp")
+            if getattr(self, "bUsePiPowerMonitorGauge", False) and self.Platform and self.Platform.HasPiPowerLog(getattr(self, "PiPowerLogPath", None)):
+                names.append("Pi Voltage")
             if self.ExternalSensorGagueData:
                 for gauge in self.ExternalSensorGagueData:
                     names.append(gauge.get("title", ""))
@@ -2455,6 +2472,8 @@ class GeneratorController(MySupport):
             self.LogErrorLine("Error pre-warming sensor log cache: " + str(e1))
 
         LastCpuTemp = 0.0
+        LastPiVolt = 0.0
+        LastPiTS = ""
 
         while True:
             try:
@@ -2467,6 +2486,15 @@ class GeneratorController(MySupport):
                         LastCpuTemp = CpuTemp
                         TimeStamp = datetime.datetime.now().strftime("%x %X")
                         self.LogToSensorLog("CPU Temp", TimeStamp, str(CpuTemp))
+
+                # Log Pi Voltage from power monitor log
+                if getattr(self, "bUsePiPowerMonitorGauge", False) and self.Platform:
+                    pi_volt, _pi_status, pi_ts = self.Platform.GetPiPowerStatus(getattr(self, "PiPowerLogPath", None))
+                    if pi_volt is not None and pi_volt > 0.0 and (pi_volt != LastPiVolt or (pi_ts and pi_ts != LastPiTS)):
+                        LastPiVolt = pi_volt
+                        LastPiTS = pi_ts or ""
+                        TimeStamp = datetime.datetime.now().strftime("%x %X")
+                        self.LogToSensorLog("Pi Voltage", TimeStamp, str(pi_volt))
                 
                 # Time to exit?
                 if self.IsStopSignaled("SensorCollectionThread"):
@@ -2714,6 +2742,22 @@ class GeneratorController(MySupport):
                 )
                 self.TileList.append(Tile)
 
+            # Raspberry pi Core Voltage / Under Voltage monitor
+            if getattr(self, "bUsePiPowerMonitorGauge", False) and self.Platform != None and self.Platform.HasPiPowerLog(getattr(self, "PiPowerLogPath", None)):
+                Tile = MyTile(
+                    self.log,
+                    title="Pi Voltage",
+                    units="V",
+                    type="voltage",
+                    subtype="voltage",
+                    nominal=1.35,
+                    minimum=0.8,
+                    maximum=1.6,
+                    callback=self.Platform.GetPiVoltage,
+                    callbackparameters=(True, getattr(self, "PiPowerLogPath", None)),
+                )
+                self.TileList.append(Tile)
+
             # external Temp data from gentemp add on
             if self.UseExternalSensorData and self.ExternalSensorGagueData != None:
                 # setup each temp gauge
@@ -2758,6 +2802,7 @@ class GeneratorController(MySupport):
                         type=type,
                         callback=self.Platform.GetWiFiSignalStrength,
                         callbackparameters=(True,False,self.bWifiIsPercent),
+                        extra_callback=self.Platform.GetWiFiBand,
                     )
                     self.TileList.append(Tile)
 
@@ -3812,9 +3857,13 @@ class GeneratorController(MySupport):
                 if not self.ValidateMaintLogEntry(Entry):
                     return "Invalid maintenance log entry"
                 self.MaintLogList.append(Entry)
-                with open(self.MaintLog, "w") as outfile:
-                    json.dump(self.MaintLogList, outfile, sort_keys=True, indent=4)  
-                    outfile.flush()
+                dir_name = os.path.dirname(self.MaintLog) or "."
+                with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False, encoding="utf-8") as tf:
+                    json.dump(self.MaintLogList, tf, sort_keys=True, indent=4)
+                    tf.flush()
+                    os.fsync(tf.fileno())
+                    temp_name = tf.name
+                os.replace(temp_name, self.MaintLog)
             except Exception as e1:
                 self.LogErrorLine("Error in AddEntryToMaintLog: " + str(e1))
                 return "Invalid input for Maintenance Log entry (2)."
@@ -3939,11 +3988,13 @@ class GeneratorController(MySupport):
     def SaveMaintLog(self, NewLog):
         try:
             self.MaintLogList = NewLog
-            with open(self.MaintLog, "w") as outfile:
-                json.dump(
-                    self.MaintLogList, outfile, sort_keys=True, indent=4
-                )  # , ensure_ascii = False)
-                outfile.flush()
+            dir_name = os.path.dirname(self.MaintLog) or "."
+            with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False, encoding="utf-8") as tf:
+                json.dump(self.MaintLogList, tf, sort_keys=True, indent=4)
+                tf.flush()
+                os.fsync(tf.fileno())
+                temp_name = tf.name
+            os.replace(temp_name, self.MaintLog)
 
         except Exception as e1:
             self.LogErrorLine("Error in SaveMaintLog: " + str(e1))

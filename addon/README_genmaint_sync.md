@@ -38,7 +38,7 @@ python3 addon/genmaint_sync.py [options]
 | `-a` | `--address` | `127.0.0.1` | Genmon server IP address or hostname. |
 | `-p` | `--port` | `9082` | Genmon server RPC port. |
 | `-c` | `--configpath` | `/etc/genmon` | Path to Genmon configuration directory containing `maintlog.json`. |
-| `-i` | `--interval` | `60` | Polling interval in seconds for daemon mode. |
+| `-i` | `--interval` | `300` | Polling interval in seconds for daemon mode (default: 5 minutes). |
 | `-1` | `--oneshot` | `False` | Run a single synchronization pass and exit. |
 | `-d` | `--dry-run` | `False` | Parse and calculate entries without modifying `maintlog.json` or state files. |
 | `-r` | `--recalculate-hours` | `False` | Recalculate engine run hours for existing `Observation` entries with `0.0` hours. |

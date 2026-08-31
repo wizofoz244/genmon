@@ -37,6 +37,8 @@ class MyTile(MyCommon):
         colors=None,
         defaultsize=None,
         values=None,
+        extra_callback=None,
+        extra_callbackparameters=None,
     ):
 
         self.log = log
@@ -50,6 +52,8 @@ class MyTile(MyCommon):
         self.SubDivisions = subdivisions
         self.Callback = callback
         self.CallbackParameters = callbackparameters
+        self.ExtraCallback = extra_callback
+        self.ExtraCallbackParameters = extra_callbackparameters
         self.Labels = labels
         self.ColorZones = colors
         self.TileType = "gauge"
@@ -138,6 +142,29 @@ class MyTile(MyCommon):
                     self.Maximum,
                 ]
                 colors = [self.RED, self.YELLOW, self.GREEN, self.YELLOW, self.RED]
+                self.ColorZones = self.SetDefault(
+                    self.ColorZones, self.CreateColorZoneList(values, colors)
+                )
+                self.DefaultSize = self.SetDefault(self.DefaultSize, 2)
+                self.TileType = "gauge"
+
+            elif self.Type.lower() in ("voltage", "corevoltage"):
+                self.Nominal = self.SetDefault(self.Nominal, 1.35)
+                self.Minimum = self.SetDefault(self.Minimum, 0.8)
+                self.Maximum = self.SetDefault(self.Maximum, 1.6)
+                self.Divisions = self.SetDefault(self.Divisions, 4)
+                self.SubDivisions = self.SetDefault(self.SubDivisions, 2)
+                self.Labels = self.SetDefault(
+                    self.Labels,
+                    [0.8, 1.0, 1.2, 1.4, 1.6],
+                )
+                values = [
+                    self.Minimum,
+                    1.20,
+                    1.25,
+                    self.Maximum,
+                ]
+                colors = [self.RED, self.YELLOW, self.GREEN]
                 self.ColorZones = self.SetDefault(
                     self.ColorZones, self.CreateColorZoneList(values, colors)
                 )
@@ -548,6 +575,19 @@ class MyTile(MyCommon):
             GUIInfo["title"] = self.Title
             GUIInfo["type"] = self.TileType
             GUIInfo["subtype"] = self.Type
+
+            if self.ExtraCallback is not None:
+                try:
+                    if self.ExtraCallbackParameters is not None:
+                        extra_val = self.ExtraCallback(*self.ExtraCallbackParameters)
+                    else:
+                        extra_val = self.ExtraCallback()
+                    if isinstance(extra_val, dict):
+                        GUIInfo.update(extra_val)
+                    elif extra_val:
+                        GUIInfo["band"] = str(extra_val)
+                except Exception as ex:
+                    self.LogErrorLine("Error in ExtraCallback (" + str(self.Title) + "): " + str(ex))
         except Exception as e1:
             self.LogErrorLine("Error in GetGUIInfo: (" + self.Title + ") : " + str(e1))
         return GUIInfo

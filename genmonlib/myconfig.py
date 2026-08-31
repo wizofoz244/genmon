@@ -53,6 +53,11 @@ class MyConfig(MyCommon):
             return
         self.InitComplete = True
 
+    # ---------------------MyConfig::HasSection----------------------------------
+    def HasSection(self, Section):
+
+        return self.config.has_section(Section)
+
     # ---------------------MyConfig::HasOption-----------------------------------
     def HasOption(self, Entry):
 
@@ -99,7 +104,7 @@ class MyConfig(MyCommon):
             if section != None:
                 self.SetSection(section)
 
-            if self.config.has_option(self.Section, Entry):
+            if self.config.has_section(self.Section) and self.config.has_option(self.Section, Entry):
                 if return_type == str:
                     return self.config.get(self.Section, Entry)
                 elif return_type == bool:
@@ -223,6 +228,9 @@ class MyConfig(MyCommon):
 
         if section != None:
             self.SetSection(section)
+
+        if Value != None and not isinstance(Value, str):
+            Value = str(Value)
 
         SectionFound = False
         try:

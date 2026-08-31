@@ -95,33 +95,42 @@ class GenNotify(MyCommon):
                 self.notify_pi_state = self.config.ReadValue(
                     "notify_pi_state", return_type=bool, default=True
                 )
+                self.notify_exercise = self.config.ReadValue(
+                    "notify_exercise", return_type=bool, default=True
+                )
+                self.notify_off_manual = self.config.ReadValue(
+                    "notify_off_manual", return_type=bool, default=True
+                )
+            else:
+                self.notify_exercise = True
+                self.notify_off_manual = True
 
             # init event callbacks
-            if onready != None and self.notify_info:
+            if onready != None:
                 self.Events["READY"] = onready
-            if onexercise != None and self.notify_info:
+            if onexercise != None:
                 self.Events["EXERCISING"] = onexercise
-            if onrun != None and self.notify_info:
+            if onrun != None:
                 self.Events["RUNNING"] = onrun
-            if onrunmanual != None and self.notify_info:
+            if onrunmanual != None:
                 self.Events["RUNNING-MANUAL"] = onrunmanual
-            if onalarm != None and self.notify_error:
+            if onalarm != None:
                 self.Events["ALARM"] = onalarm
-            if onservice != None and self.notify_warning:
+            if onservice != None:
                 self.Events["SERVICEDUE"] = onservice
-            if onoff != None and self.notify_info:
+            if onoff != None:
                 self.Events["OFF"] = onoff
-            if onmanual != None and self.notify_info:
+            if onmanual != None:
                 self.Events["MANUAL"] = onmanual
-            if onutilitychange != None and self.notify_outage:
+            if onutilitychange != None:
                 self.Events["OUTAGE"] = onutilitychange
-            if onsoftwareupdate != None and self.notify_sw_update:
+            if onsoftwareupdate != None:
                 self.Events["SOFTWAREUPDATE"] = onsoftwareupdate
             if onsystemhealth != None:
                 self.Events["SYSTEMHEALTH"] = onsystemhealth
-            if onfuelstate != None and self.notify_warning:
+            if onfuelstate != None:
                 self.Events["FUELWARNING"] = onfuelstate
-            if onpistate != None and self.notify_pi_state:
+            if onpistate != None:
                 self.Events["PISTATE"] = onpistate
 
             self.Generator = ClientInterface(
@@ -310,8 +319,6 @@ class GenNotify(MyCommon):
                         + ": "
                         + str(EventCallback)
                     )
-            else:
-                self.LogError("Invalid Callback in ProcessEventData : None : " + name)
         except Exception as e1:
             self.LogErrorLine("Error in ProcessEventData: " + name + ": " + str(e1))
 

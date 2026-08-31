@@ -282,6 +282,15 @@ class MyPlatform(MyCommon):
                     PiInfo.extend(ThrottledStatus)
             except Exception as e1:
                 pass
+            try:
+                if self.HasPiPowerLog():
+                    volt_float, pstatus, _ts = self.GetPiPowerStatus()
+                    if volt_float is not None and volt_float > 0.0:
+                        PiInfo.append({"Pi Core Voltage": "%.4f V" % volt_float})
+                    if pstatus:
+                        PiInfo.append({"Pi Power Status": str(pstatus)})
+            except Exception as e1:
+                pass
 
         except Exception as e1:
             self.LogErrorLine("Error in GetRaspberryPiInfo: " + str(e1))
@@ -586,12 +595,79 @@ class MyPlatform(MyCommon):
                                 + " dBm"
                             }
                         )
+            band = self.GetWiFiBand(adapter)
+            if band != None and band != "":
+                WiFiInfo.append({"WLAN Band": band})
             essid = self.GetWiFiSSID(adapter)
             if essid != None and essid != "":
                 WiFiInfo.append({"WLAN ESSID": essid})
         except Exception as e1:
             pass
         return WiFiInfo
+
+    # ------------ MyPlatform::GetWiFiBand ----------------------------------------
+    def GetWiFiBand(self, adapter=None):
+        try:
+            if not self.IsOSLinux():
+                return ""
+
+            if adapter is None or len(adapter) == 0:
+                if self.PreferredNetworkAdapter == None or len(self.PreferredNetworkAdapter) == 0:
+                    adapter = self.GetActiveNetworkAdapter()
+                else:
+                    adapter = self.PreferredNetworkAdapter
+
+            if not adapter or not adapter.startswith("wl"):
+                return ""
+
+            freq_mhz = None
+
+            # Try 'iw <adapter> link' first
+            try:
+                result = subprocess.check_output(["iw", adapter, "link"])
+                if sys.version_info[0] >= 3:
+                    result = result.decode("utf-8")
+                match = re.search(r"freq:\s*(\d+)", result)
+                if match:
+                    freq_mhz = int(match.group(1))
+            except Exception:
+                pass
+
+            # Fallback to 'iwconfig <adapter>'
+            if freq_mhz is None:
+                try:
+                    result = subprocess.check_output(["iwconfig", adapter])
+                    if sys.version_info[0] >= 3:
+                        result = result.decode("utf-8")
+                    match = re.search(r"Frequency:([\d\.]+)\s*(GHz|MHz)", result, re.IGNORECASE)
+                    if match:
+                        val = float(match.group(1))
+                        unit = match.group(2).upper()
+                        if unit == "GHZ":
+                            freq_mhz = int(val * 1000)
+                        else:
+                            freq_mhz = int(val)
+                except Exception:
+                    pass
+
+            if freq_mhz is not None:
+                if 2400 <= freq_mhz <= 2500:
+                    return "2.4 GHz"
+                elif 4900 <= freq_mhz <= 5900:
+                    return "5 GHz"
+                elif 5925 <= freq_mhz <= 7125:
+                    return "6 GHz"
+                elif freq_mhz < 3000:
+                    return "2.4 GHz"
+                elif freq_mhz < 5925:
+                    return "5 GHz"
+                else:
+                    return "6 GHz"
+
+            return ""
+        except Exception as e1:
+            self.LogErrorLine("Error in GetWiFiBand: " + str(e1))
+            return ""
 
     # ------------ MyPlatform::InternetConnected --------------------------------
     # Note: this function, if the network connection is not present could
@@ -612,3 +688,194 @@ class MyPlatform(MyCommon):
         except:
             conn.close()
             return False
+
+    # ------------ MyPlatform::ResolvePiPowerLogPath ----------------------------
+    DEFAULT_PI_POWER_LOG_PATHS = [
+        "/var/log/pi_power_monitor.log",
+        "/var/logs/pi_power_monitor.log",
+        "/tmp/pi_power_monitor.log",
+    ]
+
+    def ResolvePiPowerLogPath(self, log_path=None):
+        if log_path and os.path.isfile(log_path):
+            return log_path
+        if log_path and os.path.isabs(log_path) and os.path.exists(os.path.dirname(log_path)):
+            return log_path
+        for candidate in self.DEFAULT_PI_POWER_LOG_PATHS:
+            if os.path.isfile(candidate):
+                return candidate
+        return log_path or self.DEFAULT_PI_POWER_LOG_PATHS[0]
+
+    # ------------ MyPlatform::HasPiPowerLog ------------------------------------
+    def HasPiPowerLog(self, log_path=None):
+        path = self.ResolvePiPowerLogPath(log_path)
+        return os.path.isfile(path)
+
+    # ------------ MyPlatform::ParsePiPowerLogLine ------------------------------
+    @staticmethod
+    def ParsePiPowerLogLine(line):
+        """
+        Parses a log line from pi_power_monitor.log.
+        Example formats:
+          [2026-08-18 18:16:55] Core: 1.3450V | Power Status: HEALTHY
+          [2026-08-18 18:17:00] Core: 1.2350V | Power Status: UNDERVOLTAGE
+        """
+        if not line or not isinstance(line, str):
+            return None
+        line = line.strip()
+        if not len(line) or line.startswith("#"):
+            return None
+
+        # Regex to capture timestamp, voltage, and status
+        # Pattern handles: [timestamp] Core: <float>V | Power Status: <status>
+        match = re.search(
+            r"(?:\[(?P<ts_b>[^\]]+)\]|^(?P<ts_raw>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}))\s*"
+            r"(?:Core|Voltage):\s*(?P<voltage>[\d\.]+)\s*V?"
+            r"(?:\s*\|\s*Power Status:\s*(?P<status>[^\]\r\n]+))?",
+            line,
+            re.IGNORECASE,
+        )
+        if not match:
+            # Fallback looser match for Core: X.XXX
+            volt_match = re.search(r"Core:\s*([\d\.]+)", line, re.IGNORECASE)
+            if not volt_match:
+                return None
+            try:
+                v = float(volt_match.group(1))
+            except (ValueError, TypeError):
+                return None
+            ts_match = re.search(r"\[([^\]]+)\]", line)
+            ts = ts_match.group(1) if ts_match else datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            st_match = re.search(r"Power Status:\s*([^\|\r\n\]]+)", line, re.IGNORECASE)
+            st = st_match.group(1).strip() if st_match else "UNKNOWN"
+            return {"timestamp": ts, "voltage": v, "status": st, "voltage_str": "%.4f V" % v}
+
+        ts = (match.group("ts_b") or match.group("ts_raw") or "").strip()
+        volt_str = match.group("voltage")
+        try:
+            v = float(volt_str)
+        except (ValueError, TypeError):
+            return None
+        st = (match.group("status") or "").strip() if match.group("status") else "HEALTHY"
+        return {"timestamp": ts, "voltage": v, "status": st, "voltage_str": "%.4f V" % v}
+
+    # ------------ MyPlatform::GetPiPowerStatus ---------------------------------
+    def GetPiPowerStatus(self, log_path=None):
+        """
+        Reads the most recent entry from the pi_power_monitor.log.
+        Returns tuple: (voltage_float, status_str, timestamp_str)
+        """
+        path = self.ResolvePiPowerLogPath(log_path)
+        if not os.path.isfile(path):
+            return (None, None, None)
+
+        try:
+            # Read tail of the file efficiently
+            with open(path, "r", errors="ignore") as f:
+                # Seek near the end if the file is large
+                try:
+                    f.seek(0, os.SEEK_END)
+                    size = f.tell()
+                    # Read last 8KB
+                    seek_pos = max(0, size - 8192)
+                    f.seek(seek_pos)
+                except Exception:
+                    pass
+                lines = f.readlines()
+
+            for line in reversed(lines):
+                parsed = self.ParsePiPowerLogLine(line)
+                if parsed is not None:
+                    return (parsed["voltage"], parsed["status"], parsed["timestamp"])
+
+        except Exception as e1:
+            self.LogErrorLine("Error reading Pi power log: " + str(e1))
+
+        return (None, None, None)
+
+    # ------------ MyPlatform::GetPiVoltage -------------------------------------
+    def GetPiVoltage(self, ReturnFloat=False, log_path=None):
+        """
+        Returns the latest core voltage reading as float or formatted string.
+        """
+        try:
+            volt, _status, _ts = self.GetPiPowerStatus(log_path=log_path)
+            if volt is None:
+                return 0.0 if ReturnFloat else "0.00 V"
+            if ReturnFloat:
+                return round(volt, 4)
+            return "%.4f V" % volt
+        except Exception as e1:
+            self.LogErrorLine("Error in GetPiVoltage: " + str(e1))
+            return 0.0 if ReturnFloat else "0.00 V"
+
+    # ------------ MyPlatform::GetPiPowerLogHistory -----------------------------
+    def GetPiPowerLogHistory(self, log_path=None, minutes=0, max_entries=8000):
+        """
+        Extracts historical readings from the rotating log file(s).
+        Returns newest-first list of [timestamp, str(voltage), epoch].
+        """
+        active_path = self.ResolvePiPowerLogPath(log_path)
+        if not os.path.isfile(active_path):
+            return []
+
+        entries = []
+        try:
+            # Find rotated log files matching active_path + .N or active_path.N
+            dir_name = os.path.dirname(active_path) or "."
+            base_name = os.path.basename(active_path)
+            rotated_files = []
+            try:
+                for fname in os.listdir(dir_name):
+                    if fname.startswith(base_name + ".") and not fname.endswith(".gz") and not fname.endswith(".zip"):
+                        suffix = fname[len(base_name) + 1:]
+                        if suffix.isdigit():
+                            rotated_files.append((int(suffix), os.path.join(dir_name, fname)))
+                # Sort rotated files descending (e.g. .2, .1) so we read older before newer
+                rotated_files.sort(key=lambda x: x[0], reverse=True)
+            except Exception:
+                rotated_files = []
+
+            all_files = [rf[1] for rf in rotated_files] + [active_path]
+
+            cutoff_epoch = time.time() - (minutes * 60) if minutes > 0 else 0
+
+            for fpath in all_files:
+                if not os.path.isfile(fpath):
+                    continue
+                try:
+                    with open(fpath, "r", errors="ignore") as f:
+                        for line in f:
+                            parsed = self.ParsePiPowerLogLine(line)
+                            if parsed is None:
+                                continue
+                            ts_str = parsed["timestamp"]
+                            # Parse epoch
+                            epoch = 0
+                            try:
+                                # Standard format YYYY-MM-DD HH:MM:SS
+                                if "-" in ts_str:
+                                    dt = datetime.datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+                                else:
+                                    dt = datetime.datetime.strptime(ts_str, "%x %X")
+                                epoch = dt.timestamp()
+                            except Exception:
+                                epoch = 0
+
+                            if minutes > 0 and epoch > 0 and epoch < cutoff_epoch:
+                                continue
+
+                            # Standardize timestamp string for Genmon sensor log (%x %X or original)
+                            entries.append([ts_str, "%.4f" % parsed["voltage"], epoch])
+                except Exception as e1:
+                    self.LogErrorLine("Error reading history file %s: %s" % (fpath, str(e1)))
+
+            # Newest first
+            entries.reverse()
+            if max_entries and len(entries) > max_entries:
+                entries = entries[:max_entries]
+
+        except Exception as e1:
+            self.LogErrorLine("Error in GetPiPowerLogHistory: " + str(e1))
+
+        return entries
