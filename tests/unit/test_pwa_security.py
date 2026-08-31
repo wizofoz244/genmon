@@ -32,6 +32,14 @@ class TestPWASecurity(unittest.TestCase):
             with patch("genserv.os.path.exists", return_value=True):
                 self.assertIsNotNone(genserv.app)
 
+    def test_serve_favicon_definition(self) -> None:
+        """Tests that serve_favicon is defined and properly calls send_from_directory."""
+        self.assertTrue(hasattr(genserv, "serve_favicon"))
+        with patch("genserv.send_from_directory", return_value="favicon_content") as mock_send:
+            res = genserv.serve_favicon()
+            self.assertEqual(res, "favicon_content")
+            mock_send.assert_called_once_with(genserv.app.static_folder, "favicon.ico", mimetype="image/x-icon")
+
 
 if __name__ == "__main__":
     unittest.main()

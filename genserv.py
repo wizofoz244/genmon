@@ -462,6 +462,12 @@ def serve_manifest():
     return response
 
 
+@app.route("/favicon.ico")
+@app.route("/static/favicon.ico")
+def serve_favicon():
+    return send_from_directory(app.static_folder, "favicon.ico", mimetype="image/x-icon")
+
+
 # -------------------------------------------------------------------------------
 @app.route("/", methods=["GET"])
 def root():
