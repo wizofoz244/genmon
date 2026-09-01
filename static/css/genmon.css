@@ -1121,20 +1121,54 @@ input, select, textarea { font: inherit; color: inherit; }
   font-size: 1.1rem; font-weight: 700; color: var(--accent);
 }
 
-/* Power chart tile */
-.tile-chart { min-height: 170px; }
+/* Power and Telemetry chart tiles */
+.tile-chart { min-height: 180px; }
 .tile-chart .chart-wrap { flex: 1; width: 100%; min-height: 0; position: relative; }
 .tile-chart canvas { width: 100% !important; height: 100% !important; position: absolute; top: 0; left: 0; }
+
+.chart-stats {
+  display: flex; gap: 8px; justify-content: center; align-items: center;
+  flex-wrap: wrap; padding: 2px 0 6px 0; font-size: .72rem;
+  color: var(--text-2); line-height: 1.2;
+}
+.chart-stat-item { display: inline-flex; align-items: baseline; gap: 3px; }
+.chart-stat-lbl {
+  font-weight: 600; opacity: .75; font-size: .68rem;
+  text-transform: uppercase; letter-spacing: .02em;
+}
+.chart-stat-val {
+  font-family: var(--font-mono, monospace); font-weight: 600; color: var(--text-1);
+}
+
 .chart-controls {
-  display: flex; gap: 4px; justify-content: center;
-  padding-top: 6px; flex-shrink: 0;
+  display: flex; gap: 6px; justify-content: center; align-items: center;
+  flex-wrap: wrap; padding-top: 6px; flex-shrink: 0;
+}
+.chart-range-group, .chart-mode-group {
+  display: inline-flex; gap: 3px; align-items: center;
+}
+.chart-mode-group {
+  margin-left: 4px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border-color, rgba(148, 163, 184, 0.25));
 }
 .chart-btn {
   padding: 2px 8px; border-radius: var(--radius-sm);
   font-size: .7rem; background: var(--bg-3); color: var(--text-1);
-  transition: background var(--fast);
+  border: none; cursor: pointer;
+  transition: background var(--fast), color var(--fast);
 }
 .chart-btn:hover, .chart-btn.active { background: var(--accent); color: #fff; }
+.chart-mode-btn {
+  padding: 2px 7px; border-radius: var(--radius-sm);
+  font-size: .68rem; font-weight: 600;
+  background: var(--bg-3); color: var(--text-2); border: 1px solid transparent;
+  cursor: pointer; transition: background var(--fast), color var(--fast), border-color var(--fast);
+}
+.chart-mode-btn:hover { color: var(--text-1); background: var(--bg-2); }
+.chart-mode-btn.active {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
 .chart-size-btn {
   width: 22px; height: 22px; border-radius: var(--radius);
   display: flex; align-items: center; justify-content: center;

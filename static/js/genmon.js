@@ -324,14 +324,27 @@ var Theme = {
     }
 
     /* refresh Chart.js colors that can't use CSS var() */
+    var cs = getComputedStyle(document.documentElement);
+    var g = cs.getPropertyValue('--chart-grid').trim() || 'rgba(148,163,184,.1)';
+    var k = cs.getPropertyValue('--chart-tick').trim() || '#94a3b8';
     if (S.chart) {
-      var cs = getComputedStyle(document.documentElement);
-      var g = cs.getPropertyValue('--chart-grid').trim() || 'rgba(148,163,184,.1)';
-      var k = cs.getPropertyValue('--chart-tick').trim() || '#94a3b8';
       var sx = S.chart.options.scales;
       sx.x.grid.color = g; sx.x.ticks.color = k;
       sx.y.grid.color = g; sx.y.ticks.color = k;
       S.chart.update('none');
+    }
+    if (Pages && Pages.status && Pages.status._tempCharts) {
+      var tcKeys = Object.keys(Pages.status._tempCharts);
+      for (var ti = 0; ti < tcKeys.length; ti++) {
+        var tEntry = Pages.status._tempCharts[tcKeys[ti]];
+        if (tEntry && tEntry.chart && tEntry.chart.options && tEntry.chart.options.scales) {
+          tEntry.chart.options.scales.x.grid.color = g;
+          tEntry.chart.options.scales.x.ticks.color = k;
+          tEntry.chart.options.scales.y.grid.color = g;
+          tEntry.chart.options.scales.y.ticks.color = k;
+          tEntry.chart.update('none');
+        }
+      }
     }
   }
 };
@@ -2129,12 +2142,28 @@ var Pages = {
       $c.on('click', '.chart-btn', function() {
         var sensor = $(this).data('sensor');
         var $tile = $(this).closest('.tile-chart');
-        $tile.find('.chart-btn').removeClass('active');
+        $tile.find('.chart-range-group .chart-btn, .chart-controls > .chart-btn').removeClass('active');
         $(this).addClass('active');
         if (sensor) {
           Pages.status._loadTempChart(sensor, $(this).data('mins'));
         } else {
           Pages.status._loadChart($(this).data('mins'));
+        }
+      });
+
+      /* Chart mode buttons (trend / dual / raw) */
+      $c.on('click', '.chart-mode-btn', function() {
+        var sensor = $(this).data('sensor');
+        var mode = $(this).data('mode');
+        var $tile = $(this).closest('.tile-chart');
+        $tile.find('.chart-mode-btn').removeClass('active');
+        $(this).addClass('active');
+        if (sensor) {
+          var slug = Store.slugify(sensor);
+          Store.set('chart-mode-' + slug, mode);
+          var entry = Pages.status._tempCharts[sensor];
+          var mins = entry && entry.currentMins ? entry.currentMins : ($tile.find('.chart-btn.active').data('mins') || 1440);
+          Pages.status._loadTempChart(sensor, mins, entry ? entry.rawData : null);
         }
       });
 
@@ -2189,14 +2218,21 @@ var Pages = {
         '<button type="button" class="chart-size-btn' + (chartSize==='xl'?' active':'') + '" data-csz="xl" title="3 columns" tabindex="-1">3</button>' +
         '</div></div>' +
         '<h2 class="tile-title">' + esc(S.chartTitle || 'Power Output') + '</h2>' +
+        '<div class="chart-stats" id="chart-stats-pwr" aria-label="Summary statistics" style="display:none;">' +
+        '<span class="chart-stat-item"><span class="chart-stat-lbl">Cur:</span><span class="chart-stat-val val-cur">--</span></span>' +
+        '<span class="chart-stat-item"><span class="chart-stat-lbl">Min:</span><span class="chart-stat-val val-min">--</span></span>' +
+        '<span class="chart-stat-item"><span class="chart-stat-lbl">Max:</span><span class="chart-stat-val val-max">--</span></span>' +
+        '<span class="chart-stat-item"><span class="chart-stat-lbl">Avg:</span><span class="chart-stat-val val-avg">--</span></span>' +
+        '</div>' +
         '<div class="chart-wrap" aria-hidden="true"><canvas id="pwr-chart"></canvas></div>' +
         '<div class="chart-controls" aria-label="Chart time range">' +
+        '<div class="chart-range-group">' +
         '<button type="button" class="chart-btn" data-mins="60">1h</button>' +
         '<button type="button" class="chart-btn" data-mins="360">6h</button>' +
         '<button type="button" class="chart-btn" data-mins="1440">24h</button>' +
         '<button type="button" class="chart-btn" data-mins="10080">7d</button>' +
         '<button type="button" class="chart-btn active" data-mins="43200">30d</button>' +
-        '</div></div>';
+        '</div></div></div>';
     },
 
     _clockTileHtml: function() {
@@ -3246,11 +3282,35 @@ var Pages = {
       var now = this._chartNow();
       var cutoff = new Date(now.getTime() - mins * 60000);
       var points = [];
+      var realVals = [];
       for (var i = 0; i < data.length; i++) {
         var p = data[i];
         if (!p.date) continue;
-        if (p.date < cutoff) continue;
-        points.push({x: p.date.getTime(), y: p.val});
+        if (p.date >= cutoff) {
+          points.push({x: p.date.getTime(), y: p.val});
+          realVals.push(p.val);
+        }
+      }
+      /* Update power chart summary stats */
+      var $stats = $('#chart-stats-pwr');
+      if ($stats.length) {
+        if (realVals.length) {
+          var curVal = realVals[realVals.length - 1];
+          var minVal = realVals[0], maxVal = realVals[0], sumVal = 0;
+          for (var v = 0; v < realVals.length; v++) {
+            if (realVals[v] < minVal) minVal = realVals[v];
+            if (realVals[v] > maxVal) maxVal = realVals[v];
+            sumVal += realVals[v];
+          }
+          var avgVal = sumVal / realVals.length;
+          $stats.find('.val-cur').text(curVal.toFixed(1) + ' kW');
+          $stats.find('.val-min').text(minVal.toFixed(1) + ' kW');
+          $stats.find('.val-max').text(maxVal.toFixed(1) + ' kW');
+          $stats.find('.val-avg').text(avgVal.toFixed(1) + ' kW');
+          $stats.show();
+        } else {
+          $stats.find('.val-cur, .val-min, .val-max, .val-avg').text('--');
+        }
       }
       /* No data in range: flat line at last known value (usually 0) */
       if (!points.length && data.length) {
@@ -3279,12 +3339,60 @@ var Pages = {
       S.chart.update();
     },
 
-    /* --- Temperature chart tiles --- */
-    _tempCharts: {},  /* { sensorName: { chart, rawData } } */
+    /* --- Temperature & Telemetry chart tiles --- */
+    _tempCharts: {},  /* { sensorName: { chart, rawData, currentMins } } */
+
+    /**
+     * Compute a time-window centered rolling moving average over points [{x, y}].
+     */
+    _computeMovingAverage: function(points, windowMs) {
+      if (!points || points.length <= 2 || !windowMs || windowMs <= 0) {
+        return points ? points.slice() : [];
+      }
+      var halfWin = windowMs / 2;
+      var result = [];
+      var left = 0;
+      var right = 0;
+      var sum = 0;
+      var n = points.length;
+
+      for (var i = 0; i < n; i++) {
+        var curX = points[i].x;
+        var minX = curX - halfWin;
+        var maxX = curX + halfWin;
+
+        while (right < n && points[right].x <= maxX) {
+          sum += points[right].y;
+          right++;
+        }
+        while (left < right && points[left].x < minX) {
+          sum -= points[left].y;
+          left++;
+        }
+        var count = right - left;
+        var avg = count > 0 ? (sum / count) : points[i].y;
+        result.push({ x: curX, y: avg });
+      }
+      return result;
+    },
+
+    /**
+     * Determine rolling moving average window (in ms) according to span mins.
+     */
+    _getMovingAverageWindowMs: function(mins) {
+      if (mins <= 60) return 3 * 60000;       /* 1h: 3 min window */
+      if (mins <= 360) return 10 * 60000;     /* 6h: 10 min window */
+      if (mins <= 1440) return 25 * 60000;    /* 24h: 25 min window */
+      if (mins <= 10080) return 2 * 3600000;  /* 7d: 2 hour window */
+      return 6 * 3600000;                     /* 30d: 6 hour window */
+    },
 
     _tempChartTileHtml: function(sensorName) {
-      var key = 'tempchart-' + Store.slugify(sensorName);
+      var slug = Store.slugify(sensorName);
+      var key = 'tempchart-' + slug;
       var chartSize = Store.getChartSize() || 'xl';
+      var isVolt = /volt|v$/i.test(sensorName);
+      var mode = Store.get('chart-mode-' + slug, isVolt ? 'trend' : 'raw');
       return '<div class="tile tile-chart tile-' + esc(chartSize) + '" role="listitem" data-tile="' + esc(key) + '" data-size="' + esc(chartSize) + '" data-sensor="' + esc(sensorName) + '" draggable="false">' +
         '<button type="button" class="tile-hide-btn" title="Hide tile" tabindex="-1" aria-hidden="true">&times;</button>' +
         '<div class="tile-drag-handle" title="Drag to reorder" aria-hidden="true">' + icon('monitor') + '</div>' +
@@ -3295,13 +3403,26 @@ var Pages = {
         '<button type="button" class="chart-size-btn' + (chartSize==='xl'?' active':'') + '" data-csz="xl" title="3 columns" tabindex="-1">3</button>' +
         '</div></div>' +
         '<h2 class="tile-title">' + esc(sensorName) + '</h2>' +
-        '<div class="chart-wrap" aria-hidden="true"><canvas id="temp-chart-' + esc(Store.slugify(sensorName)) + '"></canvas></div>' +
-        '<div class="chart-controls" aria-label="Chart time range">' +
+        '<div class="chart-stats" id="chart-stats-' + esc(slug) + '" aria-label="Summary statistics" style="display:none;">' +
+        '<span class="chart-stat-item"><span class="chart-stat-lbl">Cur:</span><span class="chart-stat-val val-cur">--</span></span>' +
+        '<span class="chart-stat-item"><span class="chart-stat-lbl">Min:</span><span class="chart-stat-val val-min">--</span></span>' +
+        '<span class="chart-stat-item"><span class="chart-stat-lbl">Max:</span><span class="chart-stat-val val-max">--</span></span>' +
+        '<span class="chart-stat-item"><span class="chart-stat-lbl">Avg:</span><span class="chart-stat-val val-avg">--</span></span>' +
+        '</div>' +
+        '<div class="chart-wrap" aria-hidden="true"><canvas id="temp-chart-' + esc(slug) + '"></canvas></div>' +
+        '<div class="chart-controls" aria-label="Chart time range and mode">' +
+        '<div class="chart-range-group">' +
         '<button type="button" class="chart-btn" data-mins="60" data-sensor="' + esc(sensorName) + '">1h</button>' +
         '<button type="button" class="chart-btn" data-mins="360" data-sensor="' + esc(sensorName) + '">6h</button>' +
         '<button type="button" class="chart-btn active" data-mins="1440" data-sensor="' + esc(sensorName) + '">24h</button>' +
         '<button type="button" class="chart-btn" data-mins="10080" data-sensor="' + esc(sensorName) + '">7d</button>' +
         '<button type="button" class="chart-btn" data-mins="43200" data-sensor="' + esc(sensorName) + '">30d</button>' +
+        '</div>' +
+        '<div class="chart-mode-group" title="Chart display mode">' +
+        '<button type="button" class="chart-mode-btn' + (mode==='trend'?' active':'') + '" data-mode="trend" data-sensor="' + esc(sensorName) + '">Trend</button>' +
+        '<button type="button" class="chart-mode-btn' + (mode==='dual'?' active':'') + '" data-mode="dual" data-sensor="' + esc(sensorName) + '">Dual</button>' +
+        '<button type="button" class="chart-mode-btn' + (mode==='raw'?' active':'') + '" data-mode="raw" data-sensor="' + esc(sensorName) + '">Raw</button>' +
+        '</div>' +
         '</div></div>';
     },
 
@@ -3315,17 +3436,13 @@ var Pages = {
       var isVolt = /volt|v$/i.test(sensorName);
       var chart = new Chart(ctx, {
         type:'line',
-        data:{ datasets:[{
-          label: isVolt ? 'V' : '°', data:[],
-          borderColor: isVolt ? '#3b82f6' : '#f59e0b',
-          backgroundColor: isVolt ? 'rgba(59,130,246,.12)' : 'rgba(245,158,11,.1)',
-          tension:0, fill:true,
-          pointRadius:0,
-          pointBackgroundColor: isVolt ? '#3b82f6' : '#f59e0b',
-          pointBorderColor: isVolt ? '#3b82f6' : '#f59e0b'
-        }]},
+        data:{ datasets:[] },
         options:{
           responsive:true, maintainAspectRatio:false,
+          interaction:{
+            mode:'index',
+            intersect:false
+          },
           scales:{
             x:{type:'linear', display:true, grid:{color:gridC}, ticks:{
               color:tickC, maxTicksLimit:8, maxRotation:0, autoSkip:true, font:{size:10},
@@ -3361,7 +3478,7 @@ var Pages = {
               ticks:{
                 color:tickC,
                 callback: function(val) {
-                  return isVolt ? (val.toFixed(2) + ' V') : val;
+                  return isVolt ? (val.toFixed(2) + ' V') : (Math.round(val) + '°');
                 }
               }
             }
@@ -3381,15 +3498,16 @@ var Pages = {
                 },
                 label:function(item){
                   var v = item.parsed.y;
-                  return isVolt ? (v.toFixed(4) + ' V') : (v + '°');
+                  var prefix = item.dataset.label ? (item.dataset.label + ': ') : '';
+                  return prefix + (isVolt ? (v.toFixed(3) + ' V') : (Math.round(v) + '°'));
                 }
               }
             }
           },
-          animation:{duration:400}
+          animation:{duration:300}
         }
       });
-      this._tempCharts[sensorName] = { chart: chart, rawData: null };
+      this._tempCharts[sensorName] = { chart: chart, rawData: null, currentMins: 1440 };
     },
 
     _fetchTempChartData: function(sensorName, mins) {
@@ -3432,6 +3550,10 @@ var Pages = {
           } catch(e) {}
           parsed.push({ raw: raw, val: val, date: dt });
         }
+        if (self._tempCharts[sensorName]) {
+          self._tempCharts[sensorName].rawData = parsed;
+          self._tempCharts[sensorName].currentMins = mins;
+        }
         self._loadTempChart(sensorName, mins, parsed);
       });
     },
@@ -3439,19 +3561,66 @@ var Pages = {
     _loadTempChart: function(sensorName, mins, parsed) {
       var entry = this._tempCharts[sensorName];
       if (!entry || !entry.chart) return;
-      if (!parsed) { this._fetchTempChartData(sensorName, mins); return; }
+      if (!parsed) {
+        if (entry.rawData && entry.currentMins === mins) {
+          parsed = entry.rawData;
+        } else {
+          this._fetchTempChartData(sensorName, mins);
+          return;
+        }
+      }
+      entry.currentMins = mins;
+      var slug = Store.slugify(sensorName);
+      var isVolt = /volt|v$/i.test(sensorName);
+      var mode = Store.get('chart-mode-' + slug, isVolt ? 'trend' : 'raw');
+
       var now = this._chartNow();
       var cutoff = new Date(now.getTime() - mins * 60000);
       var points = [];
+      var realVals = [];
+
       for (var i = 0; i < parsed.length; i++) {
         var p = parsed[i];
         if (!p.date) continue;
-        points.push({x: p.date.getTime(), y: p.val});
+        if (p.date >= cutoff) {
+          points.push({x: p.date.getTime(), y: p.val});
+          realVals.push(p.val);
+        }
       }
+
+      /* Update Summary Stats badge */
+      var $stats = $('#chart-stats-' + slug);
+      if ($stats.length) {
+        if (realVals.length) {
+          var curVal = realVals[realVals.length - 1];
+          var minVal = realVals[0], maxVal = realVals[0], sumVal = 0;
+          for (var v = 0; v < realVals.length; v++) {
+            if (realVals[v] < minVal) minVal = realVals[v];
+            if (realVals[v] > maxVal) maxVal = realVals[v];
+            sumVal += realVals[v];
+          }
+          var avgVal = sumVal / realVals.length;
+          if (isVolt) {
+            $stats.find('.val-cur').text(curVal.toFixed(2) + ' V');
+            $stats.find('.val-min').text(minVal.toFixed(2) + ' V');
+            $stats.find('.val-max').text(maxVal.toFixed(2) + ' V');
+            $stats.find('.val-avg').text(avgVal.toFixed(2) + ' V');
+          } else {
+            $stats.find('.val-cur').text(Math.round(curVal) + '°');
+            $stats.find('.val-min').text(Math.round(minVal) + '°');
+            $stats.find('.val-max').text(Math.round(maxVal) + '°');
+            $stats.find('.val-avg').text(Math.round(avgVal) + '°');
+          }
+          $stats.show();
+        } else {
+          $stats.find('.val-cur, .val-min, .val-max, .val-avg').text('--');
+        }
+      }
+
       if (!points.length) {
-        points = [{x: cutoff.getTime(), y: 0}, {x: now.getTime(), y: 0}];
-      }
-      if (points.length) {
+        var fallbackVal = parsed.length ? parsed[parsed.length - 1].val : 0;
+        points = [{x: cutoff.getTime(), y: fallbackVal}, {x: now.getTime(), y: fallbackVal}];
+      } else {
         if (points[0].x > cutoff.getTime()) {
           points.unshift({x: cutoff.getTime(), y: points[0].y});
         }
@@ -3459,9 +3628,87 @@ var Pages = {
           points.push({x: now.getTime(), y: points[points.length-1].y});
         }
       }
+
+      var winMs = this._getMovingAverageWindowMs(mins);
+      var trendPoints = this._computeMovingAverage(points, winMs);
+
+      var mainColor = isVolt ? '#3b82f6' : '#f59e0b';
+      var faintColor = isVolt ? 'rgba(59,130,246,0.35)' : 'rgba(245,158,11,0.35)';
+      var datasets = [];
+
+      if (mode === 'dual') {
+        datasets.push({
+          label: 'Trend',
+          data: trendPoints,
+          borderColor: mainColor,
+          backgroundColor: 'transparent',
+          borderWidth: 2.2,
+          tension: 0.25,
+          fill: false,
+          pointRadius: 0,
+          order: 1
+        });
+        datasets.push({
+          label: 'Raw',
+          data: points,
+          borderColor: faintColor,
+          backgroundColor: 'transparent',
+          borderWidth: 1,
+          tension: 0,
+          fill: false,
+          pointRadius: 0,
+          order: 2
+        });
+      } else if (mode === 'raw') {
+        datasets.push({
+          label: 'Raw',
+          data: points,
+          borderColor: mainColor,
+          backgroundColor: isVolt ? 'transparent' : 'rgba(245,158,11,0.08)',
+          borderWidth: 1.5,
+          tension: 0,
+          fill: !isVolt,
+          pointRadius: 0
+        });
+      } else {
+        /* 'trend' mode (default for voltage) */
+        datasets.push({
+          label: 'Trend',
+          data: trendPoints,
+          borderColor: mainColor,
+          backgroundColor: isVolt ? 'rgba(59,130,246,0.08)' : 'rgba(245,158,11,0.08)',
+          borderWidth: 2,
+          tension: 0.25,
+          fill: true,
+          pointRadius: 0
+        });
+      }
+
+      /* Intelligent Y-axis scaling for voltage */
+      if (isVolt && realVals.length) {
+        var yMin = minVal;
+        var yMax = maxVal;
+        var span = yMax - yMin;
+        var minSpan = 0.35;
+        if (span < minSpan) {
+          var mid = (yMax + yMin) / 2;
+          yMin = mid - (minSpan / 2);
+          yMax = mid + (minSpan / 2);
+        } else {
+          var pad = span * 0.1;
+          yMin -= pad;
+          yMax += pad;
+        }
+        entry.chart.options.scales.y.min = Math.floor(yMin * 20) / 20;
+        entry.chart.options.scales.y.max = Math.ceil(yMax * 20) / 20;
+      } else {
+        delete entry.chart.options.scales.y.min;
+        delete entry.chart.options.scales.y.max;
+      }
+
       entry.chart.options.scales.x.min = cutoff.getTime();
       entry.chart.options.scales.x.max = now.getTime();
-      entry.chart.data.datasets[0].data = points;
+      entry.chart.data.datasets = datasets;
       entry.chart.update();
     },
 

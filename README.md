@@ -122,3 +122,11 @@ Genmon supports several types of generator controllers. The following table show
 * [Complete Setup, Backup & Deployment Guide](DEPLOYMENT_GUIDE.md)
 * [Network Watchdog Documentation](README_net_watchdog.md)
 * [Service Journal Sync Addon Documentation](addon/README_genmaint_sync.md)
+
+### SDLC Documentation
+| Document | Description |
+|---|---|
+| [Implementation Plan](docs/IMPLEMENTATION_PLAN.md) | Technical architecture & design plan |
+| [Task List](docs/TASK_LIST.md) | Active work items & delivery status |
+| [Walkthrough](docs/WALKTHROUGH.md) | Verification and completion summary |
+
