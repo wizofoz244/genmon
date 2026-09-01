@@ -129,18 +129,32 @@ class GenMaintSync(MySupport):
         if self.console:
             self.console.error(msg)
 
-    def connect_client(self) -> bool:
+    def connect_client(self, max_attempts: int = 5, retry_delay: int = 5) -> bool:
         """Establishes ClientInterface connection to Genmon RPC daemon.
+
+        Args:
+            max_attempts: Number of connection attempts before failing.
+            retry_delay: Delay in seconds between connection retries.
 
         Returns:
             True if connection established successfully, False otherwise.
         """
-        try:
-            self.client = ClientInterface(host=self.host, port=self.port, log=self.log)
-            return True
-        except Exception as err:
-            self.log_error(f"Failed to connect to Genmon RPC server ({self.host}:{self.port}): {err}")
-            return False
+        for attempt in range(1, max_attempts + 1):
+            try:
+                self.client = ClientInterface(host=self.host, port=self.port, log=self.log)
+                return True
+            except (Exception, SystemExit) as err:
+                if attempt < max_attempts and self.running:
+                    self.log_info(
+                        f"Genmon core daemon initializing (attempt {attempt}/{max_attempts}). Waiting {retry_delay}s..."
+                    )
+                    time.sleep(retry_delay)
+                else:
+                    self.log_error(
+                        f"Failed to connect to Genmon RPC server ({self.host}:{self.port}) after {max_attempts} attempts: {err}"
+                    )
+                    return False
+        return False
 
     def close_client(self) -> None:
         """Safely closes the ClientInterface RPC connection."""

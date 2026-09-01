@@ -7,7 +7,7 @@
  */
 
 /** @const {string} Current cache storage name. */
-const CACHE_NAME = 'genmon-v11';
+const CACHE_NAME = 'genmon-v12';
 
 /**
  * Core assets kept for offline resilience. Navigation and dynamic API responses

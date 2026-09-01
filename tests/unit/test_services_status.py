@@ -122,6 +122,30 @@ class TestServicesStatus(unittest.TestCase):
         self.assertEqual(parsed["overall_status"], "NORMAL")
         self.assertEqual(parsed["running_count"], 2)
 
+    def test_services_status_caching_and_invalidation(self):
+        """Verify get_services_status_json caches with use_cache=True and invalidates on restart."""
+        genserv._services_cache["timestamp"] = 0
+        genserv._services_cache["data"] = None
+
+        mock_psutil = MagicMock()
+        mock_psutil.process_iter.return_value = []
+        with patch.dict(sys.modules, {"psutil": mock_psutil}):
+            with patch("subprocess.check_output", return_value=b""):
+                res1 = genserv.get_services_status_json(use_cache=True)
+                self.assertIsNotNone(res1)
+                self.assertIsNotNone(genserv._services_cache["data"])
+
+                # Second call with use_cache should return exact cached dict
+                res2 = genserv.get_services_status_json(use_cache=True)
+                self.assertIs(res1, res2)
+
+                # Restart should invalidate cache
+                with patch("genserv.HasWriteAccess", return_value=True):
+                    with patch("genserv.Restart"):
+                        genserv.ProcessCommand("restart_services_cmd_json")
+                        self.assertEqual(genserv._services_cache["timestamp"], 0)
+                        self.assertIsNone(genserv._services_cache["data"])
+
 
 if __name__ == "__main__":
     unittest.main()
