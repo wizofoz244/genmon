@@ -1,62 +1,64 @@
-# Implementation Plan: Chart Formatting, Smoothing & Visual Readability Improvements
+# Implementation Plan: Session Auth Loop, Service Worker Fallback & Connection Starvation Fixes
 
-Enhance the readability of Genmon telemetry charts (specifically Pi Voltage and CPU Temp), addressing the "barcode" effect on Pi Voltage caused by high-frequency DVFS stepping, aggressive area fill, and tight vertical axis scaling.
+Resolve authentication loop redirects, Service Worker query parameter cache misses, Tailscale cloud proxy restarts, HTTP/1.1 connection pool starvation, and Android notification tag collapsing.
 
 ## Problem Analysis
-In the current implementation:
-1. **Pi Voltage "Barcode" Effect**: Raspberry Pi dynamic frequency & voltage scaling (DVFS) rapidly switches between idle (~1.20–1.23 V) and boost (~1.34–1.35 V). In a 6-hour or 24-hour view, hundreds/thousands of transitions with `tension: 0` and `fill: true` (`backgroundColor: rgba(59,130,246,.12)`) turn the graph into solid vertical blue bars.
-2. **Hyper-Tight Y-Axis Scale**: Dynamic auto-scaling without padding limits the Y-axis span to ~0.15 V, causing a normal minor stepping variation to consume 100% of the vertical canvas height.
-3. **No Trend Line / Moving Average**: Users cannot discern general power sag or long-term baseline shifts amidst the raw switching noise.
-4. **No Key Statistics**: Users must visually inspect and hover over points to guess current, minimum, maximum, and average values.
-
----
-
-## User Review Required
-
-> [!IMPORTANT]
-> - Default display mode for Voltage will be **Trend** (moving average) with an interactive toggle for **Raw** and **Dual** (faint raw stepping in background + bold trend line).
-> - Summary stats (`Cur`, `Min`, `Max`, `Avg`) will be displayed in a compact stats bar directly below the chart title.
+1. **Unauthenticated API Responses**: When a session expired or unauthenticated API calls were made to `/cmd/<command>`, `genserv.py` rendered the full HTML login page with HTTP 200 OK. Client-side AJAX parsed this as success or string data, causing redirection loops back to `/` instead of cleanly logging out via `/logout`.
+2. **Service Worker Query Parameter Cache Misses**: `caches.match(req)` in `static/sw.js` evaluated full request URLs including cache-busting `?v=...` query strings. Missing query string normalization caused asset cache misses.
+3. **HTTP/1.1 6-Connection Starvation**: On initial dashboard load, Genmon fired 9+ simultaneous heavy AJAX queries (`power_log_json=43200`, `sensor_log_json`, `script_logs_json`, `services_status_json`, `gui_status_json`, `status_json`). Chrome restricts HTTP/1.1 to 6 concurrent sockets, starving queued status telemetry and tripping false "Connection Lost" banners.
+4. **Tailscale Funnel 60s Proxy Downtime on Restart**: `startgenmon.sh restart` executed `tailscale funnel reset`, tearing down global Tailscale cloud edge proxies and TLS sessions on every restart.
+5. **Android Notification Collapsing**: Static `tag: 'genmon-push-alert'` caused Android notification manager to overwrite earlier notifications in-place.
+6. **Accessibility Form Labels**: Missing `for="..."` attributes on `<label>` elements in the Web Push preferences modal triggered DevTools accessibility warnings.
 
 ---
 
 ## Proposed Changes
 
-### Frontend Telemetry & Chart Rendering
+### Backend Authentication & Daemon Control
+
+#### [MODIFY] [`genserv.py`](file:///Users/oz/Develop/genmon/genserv.py)
+* Return `401 Unauthorized` JSON payload (`{"status": "error", "message": "Authentication required", "auth": False}`) on unauthenticated `/cmd/<command>` requests.
+
+#### [MODIFY] [`startgenmon.sh`](file:///Users/oz/Develop/genmon/startgenmon.sh)
+* Preserve active Tailscale Funnel / Serve configuration on restart; add `-t` / `--tailscale-reset` opt-in flag.
+
+#### [MODIFY] [`addon/genwebpush.py`](file:///Users/oz/Develop/genmon/addon/genwebpush.py)
+* Add unique timestamped notification tags (`genmon-{category}-{timestamp}`) to push payloads.
+
+### Frontend UI, Telemetry & Service Worker
 
 #### [MODIFY] [`static/js/genmon.js`](file:///Users/oz/Develop/genmon/static/js/genmon.js)
-* **Moving Average Algorithm**: Add rolling window smoothing based on the selected time span (e.g. 5 min window for 1h/6h, 15 min for 24h, 1 hr for 7d/30d).
-* **Format Mode Toggle**:
-  * Add mode toggle pills (`Trend`, `Dual`, `Raw`) on voltage and temperature charts.
-  * Persist the user's preference in `Store` (localStorage).
-* **Area Fill Optimization**:
-  * Set `fill: false` for raw voltage square waves so lines do not merge into solid vertical blocks.
-  * Use a subtle gradient only on smooth trend lines.
-* **Y-Axis Scale Bounds & Padding**:
-  * For voltage charts, enforce a minimum visual span (e.g., minimum 0.35 V span) with 10% padding so small 0.1 V shifts do not fill 100% of the chart height.
-* **Summary Stats Header**:
-  * Compute `current`, `min`, `max`, and `avg` for the visible time window.
-  * Render a clean inline badge (e.g. `Cur: 1.34 V | Min: 1.23 V | Max: 1.35 V | Avg: 1.31 V`).
+* Detect 401 HTTP status and invoke `window.location.replace('/logout')`.
+* Increase `ajaxTimeout` from 10s to 25s for WAN/Funnel stability.
+* Stagger heavy 30-day chart and auxiliary tile requests to prevent HTTP/1.1 socket exhaustion.
+* Eliminate redundant startup status telemetry polling.
 
-#### [MODIFY] [`static/css/genmon.css`](file:///Users/oz/Develop/genmon/static/css/genmon.css)
-* Add styling for the chart stats banner (`.chart-stats`, `.chart-stat-badge`).
-* Add styling for the format toggle pills (`.chart-mode-btn`).
+#### [MODIFY] [`static/sw.js`](file:///Users/oz/Develop/genmon/static/sw.js)
+* Add `{ ignoreSearch: true }` to `caches.match()`.
+* Update notification tag to unique timestamped identifier.
+* Bump cache name to `genmon-v16`.
+
+#### [MODIFY] [`static/js/pwa-push.js`](file:///Users/oz/Develop/genmon/static/js/pwa-push.js)
+* Defer secondary modal preference fetches to prioritize initial page boot bandwidth.
+
+#### [MODIFY] [`templates/index.html`](file:///Users/oz/Develop/genmon/templates/index.html)
+* Add explicit `for="..."` attributes linking all 13 form labels in `#pwa-push-modal` to input IDs.
 
 ---
 
 ## Verification Plan
 
 ### Automated Tests
-* Run unit and lint checks:
+* Execute unit test suite and integration tests:
   ```bash
-  python3 -m py_compile genserv.py genmon.py
+  python3 -m unittest discover -s tests/unit
+  python3 -m unittest tests/integration/test_genserv_web_integration.py
   ```
-* Run existing test suite to ensure no regressions:
+* Verify Python syntax compilation:
   ```bash
-  pytest tests/unit/
+  python3 -m py_compile genserv.py addon/genwebpush.py
   ```
-
-### Manual & GUI Verification
-* Test chart rendering across all time spans (`1h`, `6h`, `24h`, `7d`, `30d`).
-* Verify toggling between `Trend`, `Dual`, and `Raw` modes.
-* Verify live summary stats accurately update when changing time spans.
-* Verify dark and light themes render stats and lines with high contrast and zero clutter.
+* Validate bash script syntax:
+  ```bash
+  bash -n startgenmon.sh
+  ```
