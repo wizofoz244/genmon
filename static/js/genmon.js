@@ -14,7 +14,7 @@ var CFG = {
   pollMs:       3000,   // gui_status_json
   pagePollMs:   5000,   // page-specific data
   regPollMs:    1000,   // register view
-  ajaxTimeout:  4000,
+  ajaxTimeout:  10000,
   storageKey:   'genmon_v2',
   version:      '2.0.0'
 };
@@ -353,13 +353,16 @@ var API = {
         return;
       }
     }).fail(function(xhr) {
-      API._errs++;
+      // Only count failures on primary status telemetry
+      if (cmd === 'gui_status_json' || cmd === 'status_json') {
+        API._errs++;
+      }
       // Detect auth redirect
       if (xhr.responseText && xhr.responseText.indexOf('<form') >= 0) {
         window.location.href = '/';
         return;
       }
-      if (API._errs > 3 && S.connected) { S.connected = false; UI.connBadge(); }
+      if (API._errs >= 5 && S.connected) { S.connected = false; UI.connBadge(); }
     });
   },
   set: function(cmd, val, timeout) {
@@ -746,6 +749,9 @@ var Router = {
    ============================================================ */
 var Poll = {
   _st: null, _pt: null, _rt: null,
+  _statusInFlight: false,
+  _pageInFlight: false,
+  _regsInFlight: false,
   start: function() {
     this.stopAll();
     this._st = setInterval(function(){ Poll.fetchStatus(); }, CFG.pollMs);
@@ -754,10 +760,12 @@ var Poll = {
   stopAll: function() {
     clearInterval(this._st); clearInterval(this._pt); clearInterval(this._rt);
     this._st = this._pt = this._rt = null;
+    this._statusInFlight = this._pageInFlight = this._regsInFlight = false;
   },
   setPage: function(page) {
     clearInterval(this._pt); clearInterval(this._rt);
     this._pt = this._rt = null;
+    this._pageInFlight = this._regsInFlight = false;
     if (page === 'registers') {
       this._rt = setInterval(function(){ Poll.fetchRegs(); }, CFG.regPollMs);
       Poll.fetchRegs();
@@ -767,7 +775,11 @@ var Poll = {
     }
   },
   fetchStatus: function() {
-    API.get('gui_status_json').done(function(d) {
+    if (Poll._statusInFlight) return;
+    Poll._statusInFlight = true;
+    API.get('gui_status_json').always(function() {
+      Poll._statusInFlight = false;
+    }).done(function(d) {
       if (!d) return;
       S.baseStatus    = d.basestatus  || 'READY';
       S.switchState  = d.switchstate || 'Auto';
@@ -822,8 +834,13 @@ var Poll = {
         Pages.status._updateInfoTiles(d);
         Pages.status._updateWeatherTile();
         if (!S._servPollTick) S._servPollTick = 0;
-        if (++S._servPollTick % 3 === 0) {
+        S._servPollTick++;
+        // Stagger auxiliary tile polling: services tile every 10 ticks (~30s) at offset 2
+        if (S._servPollTick % 10 === 2) {
           if (!Store.isTileHidden('services')) Pages.status._updateServicesTile();
+        }
+        // Stagger scriptlogs tile every 20 ticks (~60s) at offset 7
+        if (S._servPollTick % 20 === 7) {
           if (!Store.isTileHidden('scriptlogs')) Pages.status._updateScriptLogsTile();
         }
         /* Auto-show weather tile when data arrives for the first time */
@@ -842,12 +859,20 @@ var Poll = {
   fetchPage: function() {
     var p = S.currentPage;
     if (!p || !Pages[p] || !Pages[p].cmd) return;
-    API.get(Pages[p].cmd).done(function(d) {
+    if (Poll._pageInFlight) return;
+    Poll._pageInFlight = true;
+    API.get(Pages[p].cmd).always(function() {
+      Poll._pageInFlight = false;
+    }).done(function(d) {
       if (d && S.currentPage === p && Pages[p].update) Pages[p].update(d);
     });
   },
   fetchRegs: function() {
-    API.get('registers_json').done(function(d) {
+    if (Poll._regsInFlight) return;
+    Poll._regsInFlight = true;
+    API.get('registers_json').always(function() {
+      Poll._regsInFlight = false;
+    }).done(function(d) {
       if (d && S.currentPage === 'registers') Pages.registers.update(d);
     });
   }
@@ -2204,9 +2229,12 @@ var Pages = {
 
     _updateScriptLogsTile: function() {
       var $b = $('#scriptlogs-tile-body');
-      if (!$b.length) return;
+      if (!$b.length || Pages.status._logsInFlight) return;
+      Pages.status._logsInFlight = true;
 
-      API.get('script_logs_json').done(function(d) {
+      API.get('script_logs_json').always(function() {
+        Pages.status._logsInFlight = false;
+      }).done(function(d) {
         if (!d) return;
 
         function evalStatus(key, dataObj) {
@@ -2297,9 +2325,12 @@ var Pages = {
 
     _updateServicesTile: function() {
       var $b = $('#services-tile-body');
-      if (!$b.length) return;
+      if (!$b.length || Pages.status._servicesInFlight) return;
+      Pages.status._servicesInFlight = true;
 
-      API.get('services_status_json').done(function(d) {
+      API.get('services_status_json').always(function() {
+        Pages.status._servicesInFlight = false;
+      }).done(function(d) {
         if (!d || !d.services) return;
 
         function formatStatusBadge(s) {

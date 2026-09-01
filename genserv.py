@@ -948,7 +948,18 @@ def command(command):
 
 
 # -------------------------------------------------------------------------------
-def get_script_logs_json():
+_script_logs_cache = {"timestamp": 0, "data": None}
+_script_logs_cache_lock = threading.Lock()
+
+
+def get_script_logs_json(use_cache: bool = False):
+    global _script_logs_cache
+    now = time.time()
+    if use_cache:
+        with _script_logs_cache_lock:
+            if _script_logs_cache["data"] is not None and (now - _script_logs_cache["timestamp"] < 10):
+                return _script_logs_cache["data"]
+
     def read_log_file(filepath):
         if not os.path.exists(filepath):
             return {
@@ -1065,13 +1076,18 @@ def get_script_logs_json():
     if not webpush_log:
         webpush_log = read_log_file("/var/log/genwebpush.log")
 
-    return {
+    res = {
         "sync_log": sync_log,
         "backup_log": backup_log,
         "sdcard_backup_log": sd_log,
         "net_watchdog_log": watchdog_log,
         "genwebpush_log": webpush_log,
     }
+    if use_cache:
+        with _script_logs_cache_lock:
+            _script_logs_cache["timestamp"] = time.time()
+            _script_logs_cache["data"] = res
+    return res
 
 
 # -------------------------------------------------------------------------------
@@ -1136,6 +1152,9 @@ def clear_script_log_json(log_type):
             LogErrorLine(f"Error creating cleared log {primary_path}: {e}")
 
     if cleared:
+        with _script_logs_cache_lock:
+            _script_logs_cache["timestamp"] = 0
+            _script_logs_cache["data"] = None
         return json.dumps({"result": "OK", "message": "Log cleared successfully."})
     else:
         return json.dumps({"result": "Error", "message": "Could not clear log file."})
@@ -1144,7 +1163,11 @@ def clear_script_log_json(log_type):
 # -------------------------------------------------------------------------------
 # Background Services Process Monitor
 # -------------------------------------------------------------------------------
-def get_services_status_json():
+_services_cache = {"timestamp": 0, "data": None}
+_services_cache_lock = threading.Lock()
+
+
+def get_services_status_json(use_cache: bool = False):
     """Returns real-time status of Genmon background processes and daemons.
 
     Inspects process table for core services (genmon.py, genserv.py) and
@@ -1152,6 +1175,13 @@ def get_services_status_json():
     cross-referencing with genloader.conf to report accurate running/failed/inactive
     states, along with Tailscale Funnel status.
     """
+    global _services_cache
+    now = time.time()
+    if use_cache:
+        with _services_cache_lock:
+            if _services_cache["data"] is not None and (now - _services_cache["timestamp"] < 15):
+                return _services_cache["data"]
+
     known_services = [
         {"name": "genmon.py", "title": "Genmon Core", "desc": "Generator Controller Engine", "is_core": True, "section": "genmon"},
         {"name": "genserv.py", "title": "Web Server", "desc": "Web UI & REST API Server", "is_core": True, "section": "genserv"},
@@ -1298,7 +1328,7 @@ def get_services_status_json():
 
     overall_status = "NORMAL" if failed_count == 0 else "WARNING"
 
-    return {
+    res = {
         "overall_status": overall_status,
         "running_count": running_count,
         "failed_count": failed_count,
@@ -1306,6 +1336,11 @@ def get_services_status_json():
         "tailscale": tailscale_info,
         "timestamp": int(time.time()),
     }
+    if use_cache:
+        with _services_cache_lock:
+            _services_cache["timestamp"] = time.time()
+            _services_cache["data"] = res
+    return res
 
 
 # -------------------------------------------------------------------------------
@@ -1429,16 +1464,19 @@ backup_runner_instance = BackupRunner()
 def ProcessCommand(command):
 
     if command == "services_status_json":
-        return json.dumps(get_services_status_json())
+        return json.dumps(get_services_status_json(use_cache=True))
 
     if command == "restart_services_cmd_json":
         if not HasWriteAccess():
             return json.dumps({"result": "Error", "message": "Read Only Mode"})
+        with _services_cache_lock:
+            _services_cache["timestamp"] = 0
+            _services_cache["data"] = None
         Restart()
         return json.dumps({"result": "OK", "message": "Service restart initiated."})
 
     if command == "script_logs_json":
-        return json.dumps(get_script_logs_json())
+        return json.dumps(get_script_logs_json(use_cache=True))
 
     if command.startswith("clear_script_log_json"):
         log_type = request.args.get("log", "sync")
