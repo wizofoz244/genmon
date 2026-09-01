@@ -7,6 +7,7 @@ revocation, and custom branding per Google Python Style Guide.
 
 from __future__ import annotations
 
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -38,7 +39,8 @@ class TestPWASecurity(unittest.TestCase):
         with patch("genserv.send_from_directory", return_value="favicon_content") as mock_send:
             res = genserv.serve_favicon()
             self.assertEqual(res, "favicon_content")
-            mock_send.assert_called_once_with(genserv.app.static_folder, "favicon.ico", mimetype="image/x-icon")
+            expected_dir = os.path.join(genserv.app.root_path, "static")
+            mock_send.assert_called_once_with(expected_dir, "favicon.ico", mimetype="image/x-icon")
 
 
 if __name__ == "__main__":

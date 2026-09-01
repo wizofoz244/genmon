@@ -465,7 +465,9 @@ def serve_manifest():
 @app.route("/favicon.ico")
 @app.route("/static/favicon.ico")
 def serve_favicon():
-    return send_from_directory(app.static_folder, "favicon.ico", mimetype="image/x-icon")
+    static_dir = os.path.join(app.root_path, "static")
+    icon_file = favicon if favicon else "favicon.ico"
+    return send_from_directory(static_dir, icon_file, mimetype="image/x-icon")
 
 
 # -------------------------------------------------------------------------------
