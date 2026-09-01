@@ -1,7 +1,7 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## Oz Custom Addons v1.2.0 - 2026-08-18
+## Oz Custom Addons v1.4.0 - 2026-08-31
 - **Refactoring to Google Standards**: Refactored all custom Python modules (`genwebpush.py`, `genmaint_sync.py`, test suite) to strict Google Python Style Guide (typing, Google docstrings with Args/Returns/Raises, modularity).
 - **Google Frontend Standards**: Applied Google JavaScript and HTML/CSS standards (JSDoc comments, clean DOM handling, accessible semantic markup) across Web UI and Service Worker (`sw.js`).
 - **PWA Web Push Notifications (`addon/genwebpush.py`)**: Added native Web Push alerts supporting RFC 8292 VAPID encryption, Apple APNs / Safari PWA support on iOS and macOS, custom device labeling, and specific alarm reason extraction.
