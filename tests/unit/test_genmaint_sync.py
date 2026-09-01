@@ -83,6 +83,46 @@ class TestGenMaintSync(unittest.TestCase):
             "Maintenance",
         )
 
+    def test_extract_run_sessions_linear_scale(self) -> None:
+        """Validates that extract_run_sessions runs in O(N) linear time on large datasets."""
+        import time
+
+        sync = GenMaintSync(config_path=".", oneshot=True, dry_run=True)
+        base_time = datetime.datetime(2026, 1, 1, 0, 0, 0)
+        # Generate 10,000 log lines with missing stop events to test worst-case performance
+        large_lines = []
+        for idx in range(10000):
+            t = base_time + datetime.timedelta(minutes=idx)
+            desc = "Running - Utility Loss" if (idx % 50 != 0) else "Stopped - Auto"
+            large_lines.append((t, desc))
+
+        t0 = time.time()
+        sessions = sync.extract_run_sessions(large_lines)
+        duration = time.time() - t0
+
+        # Must execute 10,000 lines in well under 0.1 seconds (linear O(N))
+        self.assertLess(duration, 0.2, f"Execution took too long: {duration}s")
+        self.assertGreater(len(sessions), 0)
+
+    def test_extract_run_sessions_interleaved_events(self) -> None:
+        """Validates continuous running lines within a single session and duplicate starts."""
+        sync = GenMaintSync(config_path=".", oneshot=True, dry_run=True)
+        lines = [
+            (datetime.datetime(2026, 7, 1, 10, 0, 0), "Exercising"),
+            (datetime.datetime(2026, 7, 1, 10, 5, 0), "Exercising"),
+            (datetime.datetime(2026, 7, 1, 10, 10, 0), "Exercising"),
+            (datetime.datetime(2026, 7, 1, 10, 15, 0), "Your generator is ready to run."),
+            # Orphaned stop event with no prior start (should not create session)
+            (datetime.datetime(2026, 7, 1, 11, 0, 0), "Stopped - Auto"),
+            # New session
+            (datetime.datetime(2026, 7, 2, 14, 0, 0), "Running - Manual"),
+            (datetime.datetime(2026, 7, 2, 15, 0, 0), "Switched Off"),
+        ]
+        sessions = sync.extract_run_sessions(lines)
+        self.assertEqual(len(sessions), 2)
+        self.assertEqual(sessions[0][2], 900.0)  # 15 minutes = 900s
+        self.assertEqual(sessions[1][2], 3600.0)  # 1 hour = 3600s
+
 
 if __name__ == "__main__":
     unittest.main()

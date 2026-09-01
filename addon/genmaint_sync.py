@@ -94,6 +94,10 @@ class GenMaintSync(MySupport):
         self.maintlog_file = os.path.join(self.config_path, "maintlog.json")
         self.state_file = os.path.join(self.config_path, "maint_sync_state.json")
         self.client: Optional[ClientInterface] = None
+        self._historical_files_scanned: bool = False
+        self._last_file_mtimes: Dict[str, float] = {}
+        self._cached_run_sessions: List[Tuple[datetime.datetime, datetime.datetime, float]] = []
+        self._accumulated_file_logs: Tuple[List[str], List[str], List[str]] = ([], [], [])
 
     def _ensure_formatter(self) -> None:
         """Enforces [YYYY-MM-DD HH:MM:SS] [LEVEL] formatting on all log handlers."""
@@ -241,14 +245,16 @@ class GenMaintSync(MySupport):
             self.log_error(f"Error writing atomic update to {self.maintlog_file}: {err}")
             return False
 
-    def fetch_controller_logs(self) -> Tuple[Optional[List[str]], Optional[List[str]]]:
-        """Fetches raw Alarm Log and Run Log entries from Genmon RPC.
+    def fetch_controller_logs(
+        self,
+    ) -> Tuple[Optional[List[str]], Optional[List[str]], Optional[List[str]]]:
+        """Fetches raw Alarm Log, Run Log, and Service Log entries from Genmon RPC.
 
         Returns:
-            Tuple of (alarm_log_lines, run_log_lines).
+            Tuple of (alarm_log_lines, run_log_lines, service_log_lines).
         """
         if not self.client:
-            return None, None
+            return None, None, None
 
         try:
             raw_response = self.client.ProcessMonitorCommand("generator: logs_json")
@@ -292,9 +298,9 @@ class GenMaintSync(MySupport):
         Returns:
             Tuple of (alarm_log_lines, run_log_lines, service_log_lines).
         """
-        alarm_lines: List[str] = []
-        run_lines: List[str] = []
-        service_lines: List[str] = []
+        alarm_lines: List[str] = list(self._accumulated_file_logs[0])
+        run_lines: List[str] = list(self._accumulated_file_logs[1])
+        service_lines: List[str] = list(self._accumulated_file_logs[2])
 
         log_paths = [
             "/etc/genmon/genmon.log",
@@ -303,13 +309,24 @@ class GenMaintSync(MySupport):
             "./genmon.log",
         ]
         expanded_paths: List[str] = []
-        for p in log_paths:
-            expanded_paths.extend(glob.glob(f"{p}*"))
+        if not self._historical_files_scanned:
+            for p in log_paths:
+                expanded_paths.extend(glob.glob(f"{p}*"))
+            self._historical_files_scanned = True
+        else:
+            expanded_paths.extend(log_paths)
 
+        files_modified = False
         for path in set(expanded_paths):
-            if not os.path.isfile(path):
+            if not os.path.isfile(path) or path.endswith(".gz"):
                 continue
             try:
+                mtime = os.path.getmtime(path)
+                if self._last_file_mtimes.get(path) == mtime:
+                    continue
+                self._last_file_mtimes[path] = mtime
+                files_modified = True
+
                 with open(path, "r", encoding="utf-8", errors="ignore") as f:
                     for line in f:
                         line_str = line.strip()
@@ -326,7 +343,14 @@ class GenMaintSync(MySupport):
                             elif any(k in desc_lower for k in ["service", "maintenance"]):
                                 service_lines.append(line_str)
             except Exception as err:
-                self.log_error(f"Error reading historical log file {path}: {err}")
+                self.log_error(f"Error reading log file {path}: {err}")
+
+        if files_modified or not self._accumulated_file_logs[0]:
+            # Deduplicate and update accumulated cache
+            alarm_lines = list(set(alarm_lines))
+            run_lines = list(set(run_lines))
+            service_lines = list(set(service_lines))
+            self._accumulated_file_logs = (alarm_lines, run_lines, service_lines)
 
         return alarm_lines, run_lines, service_lines
 
@@ -458,7 +482,10 @@ class GenMaintSync(MySupport):
     def extract_run_sessions(
         self, parsed_run_lines: List[Tuple[datetime.datetime, str]]
     ) -> List[Tuple[datetime.datetime, datetime.datetime, float]]:
-        """Extracts engine run sessions from parsed run log lines.
+        """Extracts engine run sessions from parsed run log lines in O(N) linear time.
+
+        Uses a single-pass state machine tracking session start and stop transitions,
+        completely eliminating quadratic scanning on large or fragmented log files.
 
         Args:
             parsed_run_lines: List of (datetime, description) sorted chronologically.
@@ -466,32 +493,31 @@ class GenMaintSync(MySupport):
         Returns:
             List of (start_time, end_time, duration_seconds).
         """
-        sessions = []
-        i = 0
-        n = len(parsed_run_lines)
-        while i < n:
-            dt, desc = parsed_run_lines[i]
+        sessions: List[Tuple[datetime.datetime, datetime.datetime, float]] = []
+        current_start: Optional[datetime.datetime] = None
+
+        for dt, desc in parsed_run_lines:
             desc_lower = desc.lower()
-            if any(k in desc_lower for k in ["exercising", "utility loss", "manual", "running"]):
-                start_t = dt
-                end_t = None
-                j = i + 1
-                while j < n:
-                    dt_next, desc_next = parsed_run_lines[j]
-                    desc_next_lower = desc_next.lower()
-                    if desc_next in ["Your generator is ready to run.", "Switched Off"] or "stopped" in desc_next_lower:
-                        end_t = dt_next
-                        break
-                    j += 1
-                if end_t:
-                    dur_sec = (end_t - start_t).total_seconds()
+            is_start = any(k in desc_lower for k in ["exercising", "utility loss", "manual", "running"])
+            is_stop = (
+                desc in ["Your generator is ready to run.", "Switched Off"]
+                or "stopped" in desc_lower
+                or "ready to run" in desc_lower
+                or "switched off" in desc_lower
+            )
+
+            if is_start:
+                if current_start is None:
+                    current_start = dt
+                elif (dt - current_start).total_seconds() > 86400 * 7:
+                    # Guard against multi-day gaps where a stop event was dropped
+                    current_start = dt
+            elif is_stop:
+                if current_start is not None:
+                    dur_sec = (dt - current_start).total_seconds()
                     if dur_sec > 0:
-                        sessions.append((start_t, end_t, dur_sec))
-                    i = max(j, i + 1)
-                else:
-                    i += 1
-            else:
-                i += 1
+                        sessions.append((current_start, dt, dur_sec))
+                    current_start = None
 
         return sessions
 
@@ -592,6 +618,10 @@ class GenMaintSync(MySupport):
         parsed_run_lines.sort(key=lambda x: x[0])
 
         run_sessions = self.extract_run_sessions(parsed_run_lines)
+        if run_sessions:
+            self._cached_run_sessions = run_sessions
+        elif self._cached_run_sessions:
+            run_sessions = self._cached_run_sessions
 
         updated_existing_count = 0
 
