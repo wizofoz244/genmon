@@ -33,13 +33,13 @@ class TestGenservWebIntegration(unittest.TestCase):
             with patch.object(genserv, "HasWriteAccess", return_value=True):
                 self.assertIsNotNone(genserv.app)
 
-    def test_script_logs_endpoint(self) -> None:
-        """Tests that get_script_logs_json returns structured log data."""
-        with patch("genserv.os.path.exists", return_value=False):
-            logs = genserv.get_script_logs_json()
-            self.assertIsInstance(logs, dict)
-            self.assertIn("net_watchdog_log", logs)
-            self.assertIn("sync_log", logs)
+    def test_cmd_unauthenticated_returns_401(self) -> None:
+        """Tests that /cmd/ endpoints return 401 Unauthorized JSON when not logged in."""
+        with patch.object(genserv, "HTTPAuthUser", "admin"):
+            with patch.object(genserv, "HTTPAuthPass", "secret"):
+                with patch.object(genserv.session, "get", return_value=False):
+                    resp, code = genserv.command("start_info_json")
+                    self.assertEqual(code, 401)
 
 
 if __name__ == "__main__":

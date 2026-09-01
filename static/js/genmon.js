@@ -362,7 +362,7 @@ var API = {
       API._errs = 0;
       if (!S.connected) { S.connected = true; UI.connBadge(); }
       if (typeof data === 'string' && (data.indexOf('<form') >= 0 || data.indexOf('<!DOCTYPE') >= 0)) {
-        window.location.href = '/';
+        window.location.replace('/logout');
         return;
       }
     }).fail(function(xhr) {
@@ -370,9 +370,9 @@ var API = {
       if (cmd === 'gui_status_json' || cmd === 'status_json') {
         API._errs++;
       }
-      // Detect auth redirect
-      if (xhr.responseText && xhr.responseText.indexOf('<form') >= 0) {
-        window.location.href = '/';
+      // Detect auth redirect or 401 session expiration
+      if (xhr.status === 401 || (xhr.responseText && (xhr.responseText.indexOf('<form') >= 0 || xhr.responseText.indexOf('<!DOCTYPE') >= 0))) {
+        window.location.replace('/logout');
         return;
       }
       if (API._errs >= 5 && S.connected) { S.connected = false; UI.connBadge(); }
@@ -7879,7 +7879,7 @@ function init() {
     .done(function(data) {
       if (!data || data === 'Retry' || (typeof data === 'string' && (data.indexOf('Retry') >= 0 || data.indexOf('<form') >= 0 || data.indexOf('<!DOCTYPE') >= 0))) {
         if (typeof data === 'string' && (data.indexOf('<form') >= 0 || data.indexOf('<!DOCTYPE') >= 0)) {
-          window.location.href = '/';
+          window.location.replace('/logout');
           return;
         }
         $('.loader-text').text('Initializing generator connection\u2026');
@@ -7918,7 +7918,11 @@ function init() {
         setTimeout(function() { Tour.start(); }, 800);
       }
     })
-    .fail(function() {
+    .fail(function(xhr) {
+      if (xhr && (xhr.status === 401 || (xhr.responseText && (xhr.responseText.indexOf('<form') >= 0 || xhr.responseText.indexOf('<!DOCTYPE') >= 0)))) {
+        window.location.replace('/logout');
+        return;
+      }
       $('.loader-text').text('Connecting\u2026');
       setTimeout(init, 1500);
     });
