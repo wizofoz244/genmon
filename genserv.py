@@ -952,12 +952,12 @@ _script_logs_cache = {"timestamp": 0, "data": None}
 _script_logs_cache_lock = threading.Lock()
 
 
-def get_script_logs_json(use_cache: bool = False):
+def get_script_logs_json(use_cache: bool = False, ttl: int = 10):
     global _script_logs_cache
     now = time.time()
     if use_cache:
         with _script_logs_cache_lock:
-            if _script_logs_cache["data"] is not None and (now - _script_logs_cache["timestamp"] < 10):
+            if _script_logs_cache["data"] is not None and (now - _script_logs_cache["timestamp"] < ttl):
                 return _script_logs_cache["data"]
 
     def read_log_file(filepath):
@@ -1167,7 +1167,7 @@ _services_cache = {"timestamp": 0, "data": None}
 _services_cache_lock = threading.Lock()
 
 
-def get_services_status_json(use_cache: bool = False):
+def get_services_status_json(use_cache: bool = False, ttl: int = 15):
     """Returns real-time status of Genmon background processes and daemons.
 
     Inspects process table for core services (genmon.py, genserv.py) and
@@ -1179,7 +1179,7 @@ def get_services_status_json(use_cache: bool = False):
     now = time.time()
     if use_cache:
         with _services_cache_lock:
-            if _services_cache["data"] is not None and (now - _services_cache["timestamp"] < 15):
+            if _services_cache["data"] is not None and (now - _services_cache["timestamp"] < ttl):
                 return _services_cache["data"]
 
     known_services = [
@@ -1463,8 +1463,18 @@ backup_runner_instance = BackupRunner()
 # -------------------------------------------------------------------------------
 def ProcessCommand(command):
 
-    if command == "services_status_json":
-        return json.dumps(get_services_status_json(use_cache=True))
+    if command.startswith("services_status_json"):
+        try:
+            client_ttl = int(request.args.get("ttl", 15))
+            client_ttl = max(1, min(60, client_ttl))
+        except (TypeError, ValueError):
+            client_ttl = 15
+        nocache = False
+        try:
+            nocache = request.args.get("nocache", "0") in ("1", "true")
+        except Exception:
+            pass
+        return json.dumps(get_services_status_json(use_cache=not nocache, ttl=client_ttl), separators=(',', ':'))
 
     if command == "restart_services_cmd_json":
         if not HasWriteAccess():
@@ -1475,8 +1485,18 @@ def ProcessCommand(command):
         Restart()
         return json.dumps({"result": "OK", "message": "Service restart initiated."})
 
-    if command == "script_logs_json":
-        return json.dumps(get_script_logs_json(use_cache=True))
+    if command.startswith("script_logs_json"):
+        try:
+            client_ttl = int(request.args.get("ttl", 10))
+            client_ttl = max(1, min(60, client_ttl))
+        except (TypeError, ValueError):
+            client_ttl = 10
+        nocache = False
+        try:
+            nocache = request.args.get("nocache", "0") in ("1", "true")
+        except Exception:
+            pass
+        return json.dumps(get_script_logs_json(use_cache=not nocache, ttl=client_ttl), separators=(',', ':'))
 
     if command.startswith("clear_script_log_json"):
         log_type = request.args.get("log", "sync")
