@@ -14,7 +14,7 @@ var CFG = {
   pollMs:       3000,   // gui_status_json
   pagePollMs:   5000,   // page-specific data
   regPollMs:    1000,   // register view
-  ajaxTimeout:  10000,
+  ajaxTimeout:  25000,
   storageKey:   'genmon_v2',
   version:      '2.0.0'
 };
@@ -1685,27 +1685,29 @@ var Pages = {
         }
       }
 
-      /* Init power chart */
+      /* Init power chart (deferred to prioritize primary telemetry) */
       if (info.PowerGraph && window.Chart && !Store.isTileHidden('chart')) {
         self._initChart();
-        self._fetchChartData();
+        setTimeout(function() { self._fetchChartData(); }, 350);
       }
 
-      /* Init temperature charts */
+      /* Init temperature charts (staggered to avoid connection contention) */
       if (window.Chart && S.sensors.length) {
         for (var tci2 = 0; tci2 < S.sensors.length; tci2++) {
           var tcKey2 = 'tempchart-' + Store.slugify(S.sensors[tci2]);
           if (!Store.isTileHidden(tcKey2)) {
             self._initTempChart(S.sensors[tci2]);
-            self._fetchTempChartData(S.sensors[tci2]);
+            (function(sensorName, delay) {
+              setTimeout(function() { self._fetchTempChartData(sensorName); }, delay);
+            })(S.sensors[tci2], 600 + tci2 * 250);
           }
         }
       }
 
       /* Init clock */
       if (!Store.isTileHidden('clock')) self._initClock();
-      if (!Store.isTileHidden('scriptlogs')) self._updateScriptLogsTile();
-      if (!Store.isTileHidden('services')) self._updateServicesTile();
+      if (!Store.isTileHidden('scriptlogs')) setTimeout(function() { self._updateScriptLogsTile(); }, 900);
+      if (!Store.isTileHidden('services')) setTimeout(function() { self._updateServicesTile(); }, 1200);
 
       /* Init weather tile data */
       if (S.weather) {
@@ -2185,7 +2187,6 @@ var Pages = {
       });
 
       /* Initial data fetch */
-      API.get('status_json').done(function(d){ Pages.status.update(d); });
       API.get('gui_status_json').done(function(d){
         if (d && d.tiles) Pages._updateGauges(d.tiles);
         if (d) self._updateInfoTiles(d);
