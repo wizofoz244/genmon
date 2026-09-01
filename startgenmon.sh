@@ -11,6 +11,7 @@ config_path=""
 usepython3=true
 found_action=false
 managedpackages=false
+RESET_TAILSCALE=false
 
 
 #-------------------------------------------------------------------------------
@@ -111,10 +112,15 @@ function tailscale_sync() {
 
   case "$action" in
     start|restart)
-      echo "Synchronizing Tailscale Funnel to $target_proto://127.0.0.1:$target_port..."
-      sudo tailscale funnel reset 2>/dev/null || true
-      sudo tailscale serve reset 2>/dev/null || true
-      sudo tailscale funnel --bg "$target_proto://127.0.0.1:$target_port" 2>/dev/null || true
+      local expected="proxy $target_proto://127.0.0.1:$target_port"
+      if [ "$RESET_TAILSCALE" = true ] || ! tailscale funnel status 2>/dev/null | grep -Fq "$expected"; then
+        echo "Synchronizing Tailscale Funnel to $target_proto://127.0.0.1:$target_port..."
+        sudo tailscale funnel reset 2>/dev/null || true
+        sudo tailscale serve reset 2>/dev/null || true
+        sudo tailscale funnel --bg "$target_proto://127.0.0.1:$target_port" 2>/dev/null || true
+      else
+        echo "Tailscale Funnel already active on $target_proto://127.0.0.1:$target_port (skipping reset; use -t or --tailscale-reset to force)."
+      fi
       ;;
     stop|hardstop)
       echo "Stopping Tailscale Funnel..."
@@ -203,6 +209,7 @@ function printhelp(){
   echo "   -c      path of config files"
   echo "   -p      Specify 2 or 3 for python version. 3 is default"
   echo "   -k      Clear Python bytecode cache (__pycache__ / .pyc) before execution"
+  echo "   -t      Force Tailscale Funnel and Serve reset on start/restart"
   echo ""
 }
 
@@ -225,6 +232,10 @@ while (( "$#" )); do
       ;;
     -k|--clean|--clear-cache)
       clean_pycache
+      shift
+      ;;
+    -t|--tailscale-reset)
+      RESET_TAILSCALE=true
       shift
       ;;
     -h)
