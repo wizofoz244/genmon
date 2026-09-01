@@ -79,9 +79,13 @@ class GeneratorController(MySupport):
         self.NotChanged = 0  # stats for registers
         self.Changed = 0  # stats for registers
         self.TotalChanged = 0.0  # ratio of changed ragisters
-        self.MaintLog = os.path.join(ConfigFilePath, "maintlog.json")
+        self.MaintLogFileName = os.path.join(ConfigFilePath, "maintlog.json")
         self.MaintLogList = []
         self.MaintLock = threading.RLock()
+        self.AuxAlarmLogFileName = os.path.join(ConfigFilePath, "aux_alarmlog.json")
+        self.AuxAlarmLog = []
+        self.AuxAlarmLock = threading.RLock()
+        self.CurrentAlarmState = False
         self.OutageLog = os.path.join(ConfigFilePath, "outage.txt")
         self.MinimumOutageDuration = 0
         self.PowerLogMaxSize = 15.0  # 15 MB max size
@@ -146,6 +150,8 @@ class GeneratorController(MySupport):
         self.UseMetric = False
         self.debug = False
         self.PreferredNetworkAdapter = None
+        self.ImportButtonFileList = []   # button files imported via "import_buttons" in the conf file
+        self.ImportedButtons = []        # buttons loaded from the files in self.ImportButtonFileList
 
         try:
 
@@ -181,8 +187,20 @@ class GeneratorController(MySupport):
                 self.FuelFullRate = self.config.ReadValue(
                     "full_rate", return_type=float, default=0.0
                 )
+                self.UseFuelSensor = self.config.ReadValue(
+                    "usesensorforfuelgauge", return_type=bool, default=True
+                )
+                self.UseCalculatedPower = self.config.ReadValue(
+                    "usecalculatedpower", return_type=bool, default=False
+                )
                 self.UseExternalCTData = self.config.ReadValue(
                     "use_external_power_data", return_type=bool, default=False
+                )
+                self.NominalBatteryVolts = int(
+                    self.config.ReadValue("nominalbattery", return_type=int, default=24)
+                )
+                self.VoltageConfig = self.config.ReadValue(
+                    "voltageconfiguration", default="277/480"
                 )
                 # for gentankutil
                 self.UseExternalFuelData = self.config.ReadValue(
@@ -290,6 +308,9 @@ class GeneratorController(MySupport):
                     "alternate_date_format", return_type=bool, default=False
                 )
 
+                self.UseAuxAlarmLog = self.config.ReadValue(
+                    "use_aux_alarm_log", return_type=bool, default=False
+                )
                 self.ImportButtonFileList = []
                 self.ImportedButtons = []
                 ImportButtonsFiles = config.ReadValue("import_buttons",default=None)
@@ -972,9 +993,12 @@ class GeneratorController(MySupport):
     def GetButtons(self, singlebuttonname = None):
         try:
 
-            if len(self.Buttons) < 1:
+            button_list = getattr(self, "Buttons", None)
+            # imported buttons (import_buttons in the conf file) can be present
+            # even if this controller has no built in buttons, so only return
+            # early if there are neither
+            if not button_list and not getattr(self, "ImportButtonFileList", None):
                 return []
-            button_list = self.Buttons
             button_list = self.GetButtonsCommon(button_list, singlebuttonname=singlebuttonname)
             return button_list
         except Exception as e1:
@@ -982,10 +1006,10 @@ class GeneratorController(MySupport):
             return []
     # ----------  Controller::LoadButtonsFromFile-------------------------------
     def LoadButtonsFromFile(self):
+        ImportedButtons = []
         try:
-            if self.ImportButtonFileList == None or len(self.ImportButtonFileList) == 0:
-                return []
-            ImportedButtons = []
+            if not getattr(self, "ImportButtonFileList", None):
+                return ImportedButtons
 
             for FileName in self.ImportButtonFileList:
                 ConfigFileName = os.path.join(
@@ -1015,17 +1039,21 @@ class GeneratorController(MySupport):
     # ----------  Controller::GetButtonsCommon----------------------------------
     def GetButtonsCommon(self, button_list, singlebuttonname = None):
         try:
-            if len(self.ImportButtonFileList) == 0 and button_list == None:
+            if not getattr(self, "ImportButtonFileList", None) and button_list == None:
                 return []
 
-            if not len(self.ImportedButtons):
+            if not getattr(self, "ImportedButtons", None):
                 self.ImportedButtons = self.LoadButtonsFromFile()
-
-                # combine lists only on first (and only) import
-                if button_list == None or len(button_list) == 0:
-                    button_list = self.ImportedButtons
-                else:
+                # append imported buttons onto a non-empty built-in list only
+                # once so later calls do not duplicate them
+                if button_list:
                     button_list.extend(self.ImportedButtons)
+
+            # controllers with no built-in buttons leave self.Buttons empty;
+            # imported buttons live on self.ImportedButtons and must still be
+            # returned on every call (start_info_json is fetched more than once)
+            if not button_list:
+                button_list = getattr(self, "ImportedButtons", None) or []
 
             if not isinstance(button_list, list):
                 self.LogError("Error in GetButtonsCommon: invalid input or data: "+ str(type(button_list)))
@@ -1157,6 +1185,9 @@ class GeneratorController(MySupport):
                             else:
                                 self.LogError("Error in ExecuteRemoteCommand, unsupported type: " + str(ui_cmd))
                                 return "Error in ExecuteRemoteCommand, unsupported type"
+                        elif "reg_type" in gm_cmd.keys() and isinstance(gm_cmd["reg_type"], str) and gm_cmd["reg_type"].lower() == "script" and "reg" in gm_cmd.keys():
+                            # script commands use "reg" as the script filename; they have no register value
+                            continue
                         elif not "reg" in gm_cmd.keys() or not "value" in gm_cmd.keys():
                             self.LogError("Error in ExecuteRemoteCommand, invalid command in sequence: " + str(selected_command))
                             self.LogDebug(str(button_command))
@@ -1341,7 +1372,7 @@ class GeneratorController(MySupport):
             StartInfo["Controller"] = "Generic Controller Name"
             StartInfo["PowerGraph"] = self.PowerMeterIsSupported()
             StartInfo["Sensors"] = self.GetSensorNames()
-            StartInfo["NominalBatteryVolts"] = "12"
+            StartInfo["NominalBatteryVolts"] = self.NominalBatteryVolts
             StartInfo["UtilityVoltageDisplayed"] = True
             StartInfo["RemoteCommands"] = True
             StartInfo["RemoteButtons"] = False
@@ -1420,14 +1451,14 @@ class GeneratorController(MySupport):
         except Exception as e1:
             self.LogErrorLine("Error in DisplayOutage: " + str(e1))
 
-    # ------------ GeneratorController::DisplayRegisters ------------------------
+    # ------------ GeneratorController::DisplayRegisters -----------------------
     def DisplayRegisters(self, AllRegs=False, DictOut=False):
         try:
             pass
         except Exception as e1:
             self.LogErrorLine("Error in DisplayRegisters: " + str(e1))
 
-    # ------------ GeneratorController:GetMessageText ------------------------------------
+    # ------------ GeneratorController:GetMessageText --------------------------
     def GetMessageText(self):
         try:
             msgtext = self.DisplayStatus()
@@ -1437,7 +1468,32 @@ class GeneratorController(MySupport):
             self.LogErrorLine("Error in GetMessageText: " + str(e1))
             return ""
 
-    # ----------  GeneratorController::SetGeneratorTimeDate----------------------
+    # ----------  GeneratorController::NotifyAlarmCommon------------------------
+    def NotifyAlarmCommon(self, msgbody = None, status_included = False, alarm_details = "Unknown Alarm"):
+        try:
+            if self.SystemInAlarm():
+                if not self.CurrentAlarmState:
+                    self.AddAuxAlarmEntry(alarm_details)
+                    if not msgbody == None:
+                        msgsubject = "Generator Notice: ALARM Active at " + self.SiteName
+                        if not status_included:
+                            msgbody += self.GetMessageText()
+                            msgbody += "\nIP Address: " + self.GetNetworkIp()
+                        self.MessagePipe.SendMessage(msgsubject, msgbody, msgtype="warn")
+            else:
+                if self.CurrentAlarmState:
+                    if not msgbody == None:
+                        msgsubject = "Generator Notice: ALARM Clear at " + self.SiteName
+                        if not status_included:
+                            msgbody += self.GetMessageText()
+                            msgbody += "\nIP Address: " + self.GetNetworkIp()
+                        self.MessagePipe.SendMessage(msgsubject, msgbody, msgtype="warn")
+
+            self.CurrentAlarmState = self.SystemInAlarm()
+        except Exception as e1:
+            self.LogErrorLine(f"Error in NotifyAlarmCommon: {e1}")
+
+    # ----------  GeneratorController::SetGeneratorTimeDate---------------------
     # set generator time to system time
     def SetGeneratorTimeDate(self):
 
@@ -3436,7 +3492,7 @@ class GeneratorController(MySupport):
         # for 60 kw and below diesle generators KW * 8.5%  = Fuel per hour
         try:
             if self.FuelHalfRate == 0 or self.FuelFullRate == 0:
-                self.LogDebug("ERROR: Fuel Half Rate or Full Rate is zero: Half: " + str(self.FuelHalfRate) + "Full: " + str(self.FuelFullRate) )
+                self.LogDebug(f"ERROR: Fuel Half Rate or Full Rate is zero: Half: {self.FuelHalfRate}, Full: {self.FuelFullRate}")
                 return None
 
             return [
@@ -3861,13 +3917,14 @@ class GeneratorController(MySupport):
                 if not self.ValidateMaintLogEntry(Entry):
                     return "Invalid maintenance log entry"
                 self.MaintLogList.append(Entry)
-                dir_name = os.path.dirname(self.MaintLog) or "."
-                with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False, encoding="utf-8") as tf:
-                    json.dump(self.MaintLogList, tf, sort_keys=True, indent=4)
-                    tf.flush()
-                    os.fsync(tf.fileno())
-                    temp_name = tf.name
-                os.replace(temp_name, self.MaintLog)
+                with self.MaintLock:
+                    dir_name = os.path.dirname(self.MaintLogFileName) or "."
+                    with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False, encoding="utf-8") as tf:
+                        json.dump(self.MaintLogList, tf, sort_keys=True, indent=4)
+                        tf.flush()
+                        os.fsync(tf.fileno())
+                        temp_name = tf.name
+                    os.replace(temp_name, self.MaintLogFileName)
             except Exception as e1:
                 self.LogErrorLine("Error in AddEntryToMaintLog: " + str(e1))
                 return "Invalid input for Maintenance Log entry (2)."
@@ -3943,14 +4000,6 @@ class GeneratorController(MySupport):
             return False
 
         return True
-    # ----------  GeneratorController::GetRegisterLabels------------------------
-    def GetRegisterLabels(self):
-        # return JSON of dict with registers and text descriptions
-        try:
-            return "{}"     # this is the default, no labels
-        except Exception as e1:
-            self.LogErrorLine("Error in GetRegisterLabels: " + str(e1))
-        return "{}"
 
     # ----------  GeneratorController::GetMaintLogJSON--------------------------
     def GetMaintLogJSON(self):
@@ -3958,11 +4007,12 @@ class GeneratorController(MySupport):
         try:
             if len(self.MaintLogList):
                 return json.dumps(self.MaintLogList)
-            if os.path.isfile(self.MaintLog):
+            if os.path.isfile(self.MaintLogFileName):
                 try:
-                    with open(self.MaintLog) as infile:
-                        self.MaintLogList = json.load(infile)
-                        return json.dumps(self.MaintLogList)
+                    with self.MaintLock:
+                        with open(self.MaintLogFileName) as infile:
+                            self.MaintLogList = json.load(infile)
+                            return json.dumps(self.MaintLogList)
                 except Exception as e1:
                     self.LogErrorLine("Error in GetMaintLogJSON: " + str(e1))
         except Exception as e1:
@@ -3975,11 +4025,12 @@ class GeneratorController(MySupport):
         try:
             if len(self.MaintLogList):
                 return self.MaintLogList
-            if os.path.isfile(self.MaintLog):
+            if os.path.isfile(self.MaintLogFileName):
                 try:
-                    with open(self.MaintLog) as infile:
-                        self.MaintLogList = json.load(infile)
-                        return self.MaintLogList
+                    with self.MaintLock:
+                        with open(self.MaintLogFileName) as infile:
+                            self.MaintLogList = json.load(infile)
+                            return self.MaintLogList
                 except Exception as e1:
                     self.LogErrorLine("Error in GetMaintLogDict: " + str(e1))
                     return []
@@ -3988,29 +4039,30 @@ class GeneratorController(MySupport):
 
         return []
 
-    # ----------  GeneratorController::UpdateMaintLog----------------------------
+    # ----------  GeneratorController::SaveMaintLog-----------------------------
     def SaveMaintLog(self, NewLog):
         try:
             self.MaintLogList = NewLog
-            dir_name = os.path.dirname(self.MaintLog) or "."
-            with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False, encoding="utf-8") as tf:
-                json.dump(self.MaintLogList, tf, sort_keys=True, indent=4)
-                tf.flush()
-                os.fsync(tf.fileno())
-                temp_name = tf.name
-            os.replace(temp_name, self.MaintLog)
+            with self.MaintLock:
+                dir_name = os.path.dirname(self.MaintLogFileName) or "."
+                with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False, encoding="utf-8") as tf:
+                    json.dump(self.MaintLogList, tf, sort_keys=True, indent=4)
+                    tf.flush()
+                    os.fsync(tf.fileno())
+                    temp_name = tf.name
+                os.replace(temp_name, self.MaintLogFileName)
 
         except Exception as e1:
             self.LogErrorLine("Error in SaveMaintLog: " + str(e1))
             return "Error in SaveMaintLog: " + str(e1)
 
-    # ----------  GeneratorController::ClearMaintLog-------------------------------
+    # ----------  GeneratorController::ClearMaintLog----------------------------
     def ClearMaintLog(self):
         try:
-            if len(self.MaintLog) and os.path.isfile(self.MaintLog):
+            if len(self.MaintLogFileName) and os.path.isfile(self.MaintLogFileName):
                 try:
                     with self.MaintLock:
-                        os.remove(self.MaintLog)
+                        os.remove(self.MaintLogFileName)
                 except:
                     pass
 
@@ -4095,6 +4147,93 @@ class GeneratorController(MySupport):
             return "Error in DeleteMaintLogRow: " + str(e1)
         return "OK"
 
+    # ----------  GeneratorController::ReadAuxAlarm------------------------------
+    def ReadAuxAlarm(self):
+        try:
+            if not self.UseAuxAlarmLog:
+                return []
+            if len(self.AuxAlarmLog):
+                return self.AuxAlarmLog
+            if os.path.isfile(self.AuxAlarmLogFileName):
+                try:
+                    with self.AuxAlarmLock:
+                        with open(self.AuxAlarmLogFileName) as infile:
+                            self.AuxAlarmLog = json.load(infile)
+                            return self.AuxAlarmLog
+                except Exception as e1:
+                    self.LogErrorLine("Error in ReadAuxAlarm: " + str(e1))
+                    return []
+        except Exception as e1:
+            self.LogErrorLine("Error in ReadAuxAlarm (2): " + str(e1))
+
+        return []
+
+    # ----------  GeneratorController::AddAuxAlarmEntry-------------------------
+    def AddAuxAlarmEntry(self, *args):
+        try:
+            if not self.UseAuxAlarmLog:
+                return False
+
+            entry  = ", ".join(args)
+
+            if len(self.AuxAlarmLog) == 0:
+                self.ReadAuxAlarm()
+            if self.bAlternateDateFormat:
+                date_string = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+            else:
+                date_string = datetime.datetime.now().strftime("%m/%d/%Y %H:%M:%S")
+            self.AuxAlarmLog.append(f"{date_string} {entry}")
+            self.SaveAuxAlarmLog()
+            return True
+        except Exception as e1:
+            self.LogErrorLine(f"Error in AddAuxAlarmEntry: {e1}, {entry}")
+            return False
+
+    # ----------  GeneratorController::SaveAuxAlarmLog--------------------------
+    def SaveAuxAlarmLog(self):
+        try:
+            if not self.UseAuxAlarmLog:
+                return False
+            with self.AuxAlarmLock:
+                # this will create the file if not there
+                with open(self.AuxAlarmLogFileName, "w") as outfile:
+                    json.dump(
+                        self.AuxAlarmLog, outfile, sort_keys=True, indent=4
+                    )  # , ensure_ascii = False)
+                    outfile.flush()
+
+        except Exception as e1:
+            self.LogErrorLine("Error in SaveAuxAlarmLog: " + str(e1))
+            return "Error in SaveAuxAlarmLog: " + str(e1)
+
+    # ----------  GeneratorController::ClearAuxAlarmLog-------------------------
+    def ClearAuxAlarmLog(self):
+        try:
+            if not self.UseAuxAlarmLog:
+                return False
+            if len(self.AuxAlarmLogFileName) and os.path.isfile(self.AuxAlarmLogFileName):
+                try:
+                    with self.AuxAlarmLock:
+                        os.remove(self.AuxAlarmLogFileName)
+                except:
+                    pass
+
+            self.AuxAlarmLog = {}
+
+            return "Aux alarm log cleared"
+        except Exception as e1:
+            self.LogErrorLine("Error in  ClearAuxAlarmLog: " + str(e1))
+            return "Error in  ClearAuxAlarmLog: " + str(e1)
+        return "OK"
+    
+    # ----------  GeneratorController::GetRegisterLabels------------------------
+    def GetRegisterLabels(self):
+        # return JSON of dict with registers and text descriptions
+        try:
+            return "{}"     # this is the default, no labels
+        except Exception as e1:
+            self.LogErrorLine("Error in GetRegisterLabels: " + str(e1))
+        return "{}"
 
     # ----------  GeneratorController::Close-------------------------------------
     def Close(self):

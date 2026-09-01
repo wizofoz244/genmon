@@ -48,6 +48,16 @@ All notable changes to this project will be documented in this file.
 - Updates to improve compatibility with screen readers (thanks @skipfire)
 - Corrected serial number look up (thanks @MichaelB2018)
 - Update to add new gague type for Wifi and adjusted the signal strength dBm to percent conversion (thanks @MichaelB2018)
+- Added Nee-vo tank monitor add on (thanks @@momoz)
+- Update for better alarm handing on Power Zone 200
+- Minor update to feedback email so they are always sent as plain text
+- Updated gensnmp to support pysnmp version 7.1.21 (the last version to support python 3.9)
+- Added support for an auxiliary alam log (see Advanced Settings to enable) and the Known Issues wiki for more info
+- Updated alarm codes for EvoLC 4.5L
+- Added the ability to unhide the password when logging in (thanks @MichaleB2018)
+- Fixed imported buttons (import_buttons) not appearing on the Maintenance page for controllers without built-in buttons (thanks @mattgraham)
+- Allow script-type imported command buttons to execute without a register value
+- Added example generator start / stop / transfer imported command buttons
 
 ## 2.0.01 -2026-05-18
 - Various bug fixes and typo corrections
