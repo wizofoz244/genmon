@@ -2300,34 +2300,10 @@ var Pages = {
 
         function evalStatus(key, dataObj) {
           if (!dataObj || !dataObj.lines) return { hasErr: false, hasWarn: false };
-          var ackTs = Store.get('sl_ack_time_' + key, 0);
-          var ackIdx = Store.get('sl_ack_index_' + key, -1);
-          var hasErr = false;
-          var hasWarn = false;
-
-          dataObj.lines.forEach(function(line, idx) {
-            var sev = Pages.scriptlogs ? Pages.scriptlogs._getLineSeverity(line) : 'info';
-            var isErr = (sev === 'error');
-            var isWarn = (sev === 'warn');
-
-            if (!isErr && !isWarn) return;
-
-            var tm = line.match(/(?:\[)?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})(?:\])?/);
-            var lineTs = tm ? new Date(tm[1].replace(' ', 'T')).getTime() : null;
-
-            var isAck = false;
-            if (lineTs && ackTs && lineTs <= ackTs) {
-              isAck = true;
-            } else if (!lineTs && idx <= ackIdx) {
-              isAck = true;
-            }
-
-            if (!isAck) {
-              if (isErr) hasErr = true;
-              if (isWarn) hasWarn = true;
-            }
-          });
-          return { hasErr: hasErr, hasWarn: hasWarn };
+          if (dataObj.has_unack_error !== undefined) {
+            return { hasErr: !!dataObj.has_unack_error, hasWarn: !!dataObj.has_unack_warning };
+          }
+          return { hasErr: !!dataObj.has_error, hasWarn: !!dataObj.has_warning };
         }
 
         var syncSt = evalStatus('sync', d.sync_log);
@@ -5114,13 +5090,11 @@ var Pages = {
 
       $('#sl-ack').on('click', function() {
         var tabKey = self._activeTab;
-        var logData = self._getTabLogData(tabKey);
-        var ackTime = new Date().getTime();
-        var lastIdx = logData && logData.lines ? logData.lines.length - 1 : 0;
-        Store.set('sl_ack_time_' + tabKey, ackTime);
-        Store.set('sl_ack_index_' + tabKey, lastIdx);
-        Store._flush();
-        self._renderTab();
+        API.get('ack_script_log?log=' + tabKey).done(function() {
+          self._load();
+        }).fail(function() {
+          Modal.alert('Error', 'Failed to acknowledge errors on server.');
+        });
       });
 
       $('#sl-clear').on('click', function() {
@@ -5130,9 +5104,6 @@ var Pages = {
 
         Modal.confirm('Clear Log', 'Are you sure you want to clear all entries in the ' + logName + '?', function() {
           API.get('clear_script_log_json?log=' + tabKey).done(function() {
-            Store.set('sl_ack_time_' + tabKey, new Date().getTime());
-            Store.set('sl_ack_index_' + tabKey, 0);
-            Store._flush();
             self._load();
           }).fail(function() {
             Modal.alert('Error', 'Failed to clear log file.');
@@ -5193,35 +5164,10 @@ var Pages = {
 
       function evalTabStatus(key, dataObj) {
         if (!dataObj || !dataObj.lines) return { unackError: false, unackWarn: false };
-        var ackTs = Store.get('sl_ack_time_' + key, 0);
-        var ackIdx = Store.get('sl_ack_index_' + key, -1);
-        var unackError = false;
-        var unackWarn = false;
-
-        dataObj.lines.forEach(function(line, idx) {
-          var sev = self._getLineSeverity(line);
-          var isErr = (sev === 'error');
-          var isWarn = (sev === 'warn');
-
-          if (!isErr && !isWarn) return;
-
-          var tm = line.match(/(?:\[)?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})(?:\])?/);
-          var lineTs = tm ? new Date(tm[1].replace(' ', 'T')).getTime() : null;
-
-          var isAck = false;
-          if (lineTs && ackTs && lineTs <= ackTs) {
-            isAck = true;
-          } else if (!lineTs && idx <= ackIdx) {
-            isAck = true;
-          }
-
-          if (!isAck) {
-            if (isErr) unackError = true;
-            if (isWarn) unackWarn = true;
-          }
-        });
-
-        return { unackError: unackError, unackWarn: unackWarn };
+        if (dataObj.has_unack_error !== undefined) {
+          return { unackError: !!dataObj.has_unack_error, unackWarn: !!dataObj.has_unack_warning };
+        }
+        return { unackError: !!dataObj.has_error, unackWarn: !!dataObj.has_warning };
       }
 
       ['sync', 'backup', 'sdcard', 'watchdog', 'webpush'].forEach(function(key) {
@@ -5253,8 +5199,8 @@ var Pages = {
       var lines = logData.lines || [];
       var formattedLines = [];
 
-      var ackTs = Store.get('sl_ack_time_' + tabKey, 0);
-      var ackIdx = Store.get('sl_ack_index_' + tabKey, -1);
+      var ackEpoch = (logData.last_ack_time || 0) * 1000;
+      var lastSeenTs = 0;
 
       lines.forEach(function(line, idx) {
         if (search && line.toLowerCase().indexOf(search) === -1) return;
@@ -5264,13 +5210,18 @@ var Pages = {
         var isWarn = (sev === 'warn');
 
         var tm = line.match(/(?:\[)?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})(?:\])?/);
-        var lineTs = tm ? new Date(tm[1].replace(' ', 'T')).getTime() : null;
+        if (tm) {
+          lastSeenTs = new Date(tm[1].replace(' ', 'T')).getTime();
+        }
+        var lineTs = lastSeenTs;
 
         var isAck = false;
-        if (lineTs && ackTs && lineTs <= ackTs) {
-          isAck = true;
-        } else if (!lineTs && idx <= ackIdx) {
-          isAck = true;
+        if (ackEpoch > 0) {
+          if (lineTs > 0) {
+            isAck = (lineTs <= ackEpoch);
+          } else {
+            isAck = true;
+          }
         }
 
         var lineEsc = esc(line);

@@ -1,54 +1,52 @@
-# Walkthrough: Session Auth Loop, Service Worker Fallback & Connection Starvation Fixes
+# Walkthrough: Global Server-Side Script Log Error Acknowledgment
 
-Resolved the session expiration redirection loop, Service Worker query parameter cache misses, Tailscale cloud proxy restarts, HTTP/1.1 connection pool starvation, and Android notification tag collapsing.
+Transitioned Script & Add-on Log error/warning acknowledgment from client-side browser storage to authoritative server-side tracking in `genserv.py`. This ensures full synchronization across devices, tabs, and sessions with zero race conditions.
+
+## Key Changes
+
+### Backend: Server-Side State & Acknowledgment Evaluation
+- **State Persistence**:
+  - Implemented `get_script_log_acks_path()`, `load_script_log_acks()`, and `save_script_log_ack()` in [genserv.py](file:///Users/oz/Develop/genmon/genserv.py).
+  - State is saved in `/etc/genmon/script_log_acks.json` (with local `./data/script_log_acks.json` and `./script_log_acks.json` fallbacks).
+  - Automatically migrates legacy timestamps stored in `genmon.conf` (`ui_prefs`) if the state file is missing.
+- **Log Evaluation**:
+  - `get_script_logs_json` in [genserv.py](file:///Users/oz/Develop/genmon/genserv.py) evaluates log line timestamps against server acknowledgment timestamps.
+  - Computes `has_unack_error`, `has_unack_warning`, and returns `last_ack_time` alongside `has_error` and `has_warning` for complete backward compatibility.
+- **New Command Endpoint**:
+  - Added `/cmd/ack_script_log?log=<key>` endpoint in `ProcessCommand` to record acknowledgments and invalidate cache.
+- **Auto-Acknowledgment on Clear**:
+  - `clear_script_log_json()` automatically records acknowledgment for the cleared routine.
+
+### Frontend: Authoritative Status Binding
+- **Script Logs Page (`Pages.scriptlogs`)**:
+  - Updated `#sl-ack` button click handler in [genmon.js](file:///Users/oz/Develop/genmon/static/js/genmon.js) to trigger `/cmd/ack_script_log?log=<tabKey>`.
+  - Updated `evalTabStatus` to bind directly to server `has_unack_error` and `has_unack_warning`.
+  - Aligned line highlighting with `last_ack_time` from server payload.
+- **Dashboard Health Tile (`Pages.status._updateScriptLogsTile`)**:
+  - Replaced client-side `Store` calculations with server-authoritative `has_unack_error` / `has_unack_warning`, resolving initial page-load race conditions.
+
+### Test Coverage
+- **Unit Tests**: Added [tests/unit/test_server_log_ack.py](file:///Users/oz/Develop/genmon/tests/unit/test_server_log_ack.py) covering path resolution, save/load, unack status evaluation, the command endpoint, and auto-ack on clear.
+- **E2E Browser GUI Tests**: Added [tests/gui/test_script_logs_gui.py](file:///Users/oz/Develop/genmon/tests/gui/test_script_logs_gui.py) and [tests/gui/script_logs_test_harness.html](file:///Users/oz/Develop/genmon/tests/gui/script_logs_test_harness.html) testing click interactions, tab badges, and status banner updates in headless Chrome.
 
 ---
 
-## Summary of Key Changes
+## Verification Results
 
-### 1. Authentication Loop & Session Expiration Fix
-* **Backend (`genserv.py`)**: When an unauthenticated request hits `/cmd/<command>`, `genserv.py` now returns an explicit `HTTP 401 Unauthorized` JSON payload (`{"status": "error", "message": "Authentication required", "auth": False}`) instead of returning the HTML login page with HTTP 200.
-* **Frontend (`static/js/genmon.js`)**: Updated `API.get` and `API.set` failure handlers to detect HTTP 401 and invoke `window.location.replace('/logout')` rather than navigating to `/`. This ensures expired session cookies are actively cleared by Flask before showing the login form.
-
-### 2. Service Worker Query String Normalization
-* **Asset Caching (`static/sw.js`)**: Configured `caches.match(req, { ignoreSearch: true })` so requests with version query parameters (e.g. `?v=1782662125`) successfully match pre-cached assets.
-* **Cache Versioning**: Bumped cache name to `genmon-v16`.
-
-### 3. HTTP/1.1 6-Connection Starvation & Timeout Resilience
-* **Staggered Heavy Queries (`static/js/genmon.js`)**: Deferred 30-day power graphs (`power_log_json=43200`) and 24-hour temperature charts by 350ms–600ms on startup. Primary telemetry (`gui_status_json`) receives 100% of initial socket bandwidth.
-* **Eliminated Redundant Startup Polling**: Removed duplicate simultaneous `status_json` invocation during status page rendering.
-* **Increased AJAX Timeout**: Raised `ajaxTimeout` from 10s to 25s for WAN and Tailscale Funnel stability.
-* **Deferred Push Modal Loading (`static/js/pwa-push.js`)**: Delayed secondary Web Push preference fetching by 3s so initial page boot is completely unblocked.
-
-### 4. Zero-Downtime Tailscale Funnel Restarts
-* **Smart Funnel Preservation (`startgenmon.sh`)**: On `start` or `restart`, checks if Tailscale Funnel is already active on the configured protocol and port (`https+insecure://127.0.0.1:8443`). If active, skips `tailscale funnel reset`, eliminating the 30–60 second cloud proxy teardown.
-* **New Switch**: Added `-t` / `--tailscale-reset` to allow users to force a proxy reset when needed.
-
-### 5. Android Web Push Notification Stacking
-* **Unique Tags (`addon/genwebpush.py`, `static/sw.js`)**: Replaced static `genmon-push-alert` tag with timestamped identifiers (`genmon-{category}-{timestamp}`). Android now stacks consecutive alerts into separate cards instead of overwriting earlier ones.
-
-### 6. Accessibility (a11y) Form Labels
-* **Label Association (`templates/index.html`)**: Added explicit `for="..."` attributes linking all 13 form labels in `#pwa-push-modal` to their respective form input IDs.
-
----
-
-## Verification & Automated Test Results
-
-### 1. Integration Tests
-* Added `test_cmd_unauthenticated_returns_401` in [`tests/integration/test_genserv_web_integration.py`](file:///Users/oz/Develop/genmon/tests/integration/test_genserv_web_integration.py).
-* Ran full test suite:
+### Unit Tests
+```bash
+python3 -m unittest discover -s tests -p "test_*.py"
+```
 ```text
-Ran 63 unit tests in 0.580s: OK
-Ran 3 integration tests in 0.002s: OK
+Ran 109 tests in 1.857s
+OK
 ```
 
-### 2. Syntax & Compilation Checks
-* Python compilation: `python3 -m py_compile genserv.py addon/genwebpush.py` passed with code 0.
-* Bash script validation: `bash -n startgenmon.sh` passed with code 0.
-* JavaScript validation: `jsc` validated `static/js/genmon.js`, `static/sw.js`, and `static/js/pwa-push.js`.
-
-### 3. Cross-Platform Latency Benchmarks
-* Local loopback HTTP: 0.002s (2 ms)
-* Local loopback HTTPS: 0.049s (49 ms)
-* Remote Funnel macOS: 0.12s–0.81s
-* Remote Funnel Windows PowerShell: 0.44s–1.96s
+### Browser GUI Tests
+```bash
+.venv2/bin/python tests/gui/test_script_logs_gui.py
+```
+```text
+Ran 3 tests in 3.939s
+OK
+```

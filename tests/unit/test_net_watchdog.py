@@ -85,7 +85,7 @@ class TestNetWatchdog(unittest.TestCase):
                 with patch("builtins.open", m_open):
                     res_str = genserv.clear_script_log_json("watchdog")
                     self.assertIn('"result": "OK"', res_str)
-                    m_open.assert_called_with(
+                    m_open.assert_any_call(
                         target_path, "w", encoding="utf-8"
                     )
 

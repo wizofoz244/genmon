@@ -1,26 +1,24 @@
-# Task List: Session Auth Loop, Service Worker Fallback & Connection Starvation Fixes
+# Task List: Global Server-Side Script Log Error Acknowledgment
 
 - [x] **Phase 1: Planning & Issue Tracking**
-  - [x] Create GitHub Issue #46 <!-- id: 1 -->
-  - [x] Create dedicated branch `fix/session-auth-loop-and-sw-fallback` <!-- id: 2 -->
+  - [x] Create GitHub Issue #47 <!-- id: 1 -->
+  - [x] Create dedicated branch `feature/server-side-log-acknowledgment` <!-- id: 2 -->
   - [x] Persist SDLC documentation in `docs/` <!-- id: 3 -->
 - [x] **Phase 2: Implementation**
-  - [x] Return 401 Unauthorized JSON for unauthenticated `/cmd/` in `genserv.py` <!-- id: 4 -->
-  - [x] Replace `location.href = '/'` with `location.replace('/logout')` in `static/js/genmon.js` <!-- id: 5 -->
-  - [x] Add `{ ignoreSearch: true }` in `static/sw.js` for query-string asset matching <!-- id: 6 -->
-  - [x] Stagger heavy 30-day chart and auxiliary queries in `static/js/genmon.js` <!-- id: 7 -->
-  - [x] Increase `ajaxTimeout` to 25s for WAN/Funnel stability <!-- id: 8 -->
-  - [x] Add `-t` / `--tailscale-reset` opt-in flag to `startgenmon.sh` to preserve Funnel proxies <!-- id: 9 -->
-  - [x] Defer secondary modal push preference loading in `static/js/pwa-push.js` <!-- id: 10 -->
-  - [x] Add explicit `for="..."` attributes to form labels in `templates/index.html` <!-- id: 11 -->
-  - [x] Add timestamped notification tags in `addon/genwebpush.py` and `static/sw.js` for Android alert stacking <!-- id: 12 -->
-  - [x] Bump cache name to `genmon-v16` <!-- id: 13 -->
+  - [x] Implement thread-safe storage helpers (`get_script_log_acks_path`, `load_script_log_acks`, `save_script_log_ack`) in `genserv.py` <!-- id: 4 -->
+  - [x] Support legacy `ui_prefs` migration from `genmon.conf` <!-- id: 5 -->
+  - [x] Parse line timestamps against acknowledgment epoch in `get_script_logs_json` <!-- id: 6 -->
+  - [x] Add `/cmd/ack_script_log?log=<key>` endpoint in `genserv.py` <!-- id: 7 -->
+  - [x] Auto-acknowledge routines upon clearing in `clear_script_log_json` <!-- id: 8 -->
+  - [x] Update frontend Script Logs page to call `/cmd/ack_script_log` and bind to server status <!-- id: 9 -->
+  - [x] Update Dashboard health tile to use server-authoritative status, eliminating race conditions <!-- id: 10 -->
 - [x] **Phase 3: Verification & Automated Tests**
-  - [x] Add integration test for unauthenticated 401 response <!-- id: 14 -->
-  - [x] Execute full unit & integration test suite (63 unit + 3 integration tests passing) <!-- id: 15 -->
-  - [x] Compile Python and check bash script syntax <!-- id: 16 -->
-  - [x] Validate cross-platform latency via curl on macOS and Windows PowerShell <!-- id: 17 -->
-- [x] **Phase 4: Remote Push & Review**
-  - [x] Save walkthrough artifact (`docs/WALKTHROUGH.md`) <!-- id: 18 -->
-  - [x] Commit and push all changes to `origin/fix/session-auth-loop-and-sw-fallback` <!-- id: 19 -->
-  - [x] Merge cleanly to `main` <!-- id: 20 -->
+  - [x] Author comprehensive unit tests (`tests/unit/test_server_log_ack.py`) <!-- id: 11 -->
+  - [x] Author end-to-end browser GUI tests (`tests/gui/test_script_logs_gui.py`) <!-- id: 12 -->
+  - [x] Execute full unit & GUI test suite (109 unit tests + 7 GUI tests passing 100%) <!-- id: 13 -->
+  - [x] Compile and verify all Python syntax <!-- id: 14 -->
+- [ ] **Phase 4: Remote Push & Review**
+  - [x] Save walkthrough artifact (`docs/WALKTHROUGH.md`) <!-- id: 15 -->
+  - [ ] Commit and push all changes to `origin/feature/server-side-log-acknowledgment` <!-- id: 16 -->
+  - [ ] Proactively open Pull Request linking Issue #47 <!-- id: 17 -->
+
