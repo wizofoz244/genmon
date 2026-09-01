@@ -140,8 +140,12 @@ class GeneratorController(MySupport):
         self.OutageReoccuringNoticeTime = (self.ProgramStartTime)
         self.OutageNoticeDelayTime = None
         self.LastOutageDuration = self.OutageStartTime - self.OutageStartTime
-        self.OutageNoticeDelay = 0
+        self.OutageNoticeDelay = 5
         self.Buttons = []   # UI command buttons (loaded after controller ID, if any)
+        self.bDisablePlatformStats = False
+        self.UseMetric = False
+        self.debug = False
+        self.PreferredNetworkAdapter = None
 
         try:
 
@@ -276,7 +280,7 @@ class GeneratorController(MySupport):
                 )
 
                 self.OutageNoticeDelay = self.config.ReadValue(
-                    "outage_notice_delay", return_type=int, default=0
+                    "outage_notice_delay", return_type=int, default=5
                 )
 
                 self.bDisablePlatformStats = self.config.ReadValue(

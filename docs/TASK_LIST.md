@@ -1,24 +1,14 @@
-# Task List: Global Server-Side Script Log Error Acknowledgment
+# Task List - Suppress Spurious Utility Outage Notifications on Restart (Issue #49)
 
-- [x] **Phase 1: Planning & Issue Tracking**
-  - [x] Create GitHub Issue #47 <!-- id: 1 -->
-  - [x] Create dedicated branch `feature/server-side-log-acknowledgment` <!-- id: 2 -->
-  - [x] Persist SDLC documentation in `docs/` <!-- id: 3 -->
-- [x] **Phase 2: Implementation**
-  - [x] Implement thread-safe storage helpers (`get_script_log_acks_path`, `load_script_log_acks`, `save_script_log_ack`) in `genserv.py` <!-- id: 4 -->
-  - [x] Support legacy `ui_prefs` migration from `genmon.conf` <!-- id: 5 -->
-  - [x] Parse line timestamps against acknowledgment epoch in `get_script_logs_json` <!-- id: 6 -->
-  - [x] Add `/cmd/ack_script_log?log=<key>` endpoint in `genserv.py` <!-- id: 7 -->
-  - [x] Auto-acknowledge routines upon clearing in `clear_script_log_json` <!-- id: 8 -->
-  - [x] Update frontend Script Logs page to call `/cmd/ack_script_log` and bind to server status <!-- id: 9 -->
-  - [x] Update Dashboard health tile to use server-authoritative status, eliminating race conditions <!-- id: 10 -->
-- [x] **Phase 3: Verification & Automated Tests**
-  - [x] Author comprehensive unit tests (`tests/unit/test_server_log_ack.py`) <!-- id: 11 -->
-  - [x] Author end-to-end browser GUI tests (`tests/gui/test_script_logs_gui.py`) <!-- id: 12 -->
-  - [x] Execute full unit & GUI test suite (109 unit tests + 7 GUI tests passing 100%) <!-- id: 13 -->
-  - [x] Compile and verify all Python syntax <!-- id: 14 -->
-- [ ] **Phase 4: Remote Push & Review**
-  - [x] Save walkthrough artifact (`docs/WALKTHROUGH.md`) <!-- id: 15 -->
-  - [ ] Commit and push all changes to `origin/feature/server-side-log-acknowledgment` <!-- id: 16 -->
-  - [ ] Proactively open Pull Request linking Issue #47 <!-- id: 17 -->
-
+- [ ] 1. Update `genmonlib/mynotify.py` <!-- id: 1 -->
+  - [ ] 1.1 In `GetOutageState()`, guard `LastOutageStatus is None and not OutageState` to set baseline `LastOutageStatus = False` without dispatching event <!-- id: 1.1 -->
+  - [ ] 1.2 In `GetMonitorState()`, guard `LastSoftwareUpdateStatus` and `LastPiState` against uninitialized false-positive notifications <!-- id: 1.2 -->
+- [ ] 2. Update `genmonlib/controller.py` and `conf/genmon.conf` <!-- id: 2 -->
+  - [ ] 2.1 Set default `outage_notice_delay` to 5 seconds in `genmonlib/controller.py` <!-- id: 2.1 -->
+  - [ ] 2.2 Add and document `outage_notice_delay = 5` in `conf/genmon.conf` <!-- id: 2.2 -->
+- [ ] 3. Author Unit Tests <!-- id: 3 -->
+  - [ ] 3.1 Create `tests/unit/test_notify_outage.py` verifying startup baseline suppression and active outage detection <!-- id: 3.1 -->
+  - [ ] 3.2 Verify test coverage and pass status <!-- id: 3.2 -->
+- [ ] 4. Documentation & Git Sync <!-- id: 4 -->
+  - [ ] 4.1 Update `docs/WALKTHROUGH.md` <!-- id: 4.1 -->
+  - [ ] 4.2 Auto-commit and push to `origin/fix/outage-notification-on-restart` <!-- id: 4.2 -->

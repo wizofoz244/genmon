@@ -1,52 +1,49 @@
-# Walkthrough: Global Server-Side Script Log Error Acknowledgment
+# Walkthrough - Suppress Spurious Utility Outage Notifications on Genmon Restart
 
-Transitioned Script & Add-on Log error/warning acknowledgment from client-side browser storage to authoritative server-side tracking in `genserv.py`. This ensures full synchronization across devices, tabs, and sessions with zero race conditions.
+Resolved Issue #49: Eliminated false-alarm utility outage / restoration alerts dispatched upon daemon startup caused by uninitialized baseline states in `GenNotify` and transient 0V Modbus readings during serial port handshake.
 
 ## Key Changes
 
-### Backend: Server-Side State & Acknowledgment Evaluation
-- **State Persistence**:
-  - Implemented `get_script_log_acks_path()`, `load_script_log_acks()`, and `save_script_log_ack()` in [genserv.py](file:///Users/oz/Develop/genmon/genserv.py).
-  - State is saved in `/etc/genmon/script_log_acks.json` (with local `./data/script_log_acks.json` and `./script_log_acks.json` fallbacks).
-  - Automatically migrates legacy timestamps stored in `genmon.conf` (`ui_prefs`) if the state file is missing.
-- **Log Evaluation**:
-  - `get_script_logs_json` in [genserv.py](file:///Users/oz/Develop/genmon/genserv.py) evaluates log line timestamps against server acknowledgment timestamps.
-  - Computes `has_unack_error`, `has_unack_warning`, and returns `last_ack_time` alongside `has_error` and `has_warning` for complete backward compatibility.
-- **New Command Endpoint**:
-  - Added `/cmd/ack_script_log?log=<key>` endpoint in `ProcessCommand` to record acknowledgments and invalidate cache.
-- **Auto-Acknowledgment on Clear**:
-  - `clear_script_log_json()` automatically records acknowledgment for the cleared routine.
+### Notification Polling Engine
+#### [genmonlib/mynotify.py](file:///Users/oz/Develop/genmon/genmonlib/mynotify.py)
+- **Baseline State Tracking**: Guarded initial state handling in `GetOutageState()`. When `self.LastOutageStatus is None` and `OutageState is False` (normal utility power on boot), initialize `self.LastOutageStatus = False` without calling `ProcessEventData("OUTAGE", False, None)`.
+- **Active Outage Preservation**: If Genmon starts during a genuine active outage (`OutageState is True`), `ProcessEventData("OUTAGE", True, None)` continues to be called, ensuring alerts are dispatched when power is actually down.
+- **Extended Baseline Guards**: Guarded initial uninitialized states for `SOFTWAREUPDATE` (`LastSoftwareUpdateStatus`) and `PISTATE` (`LastPiState`) to prevent spurious startup notifications.
 
-### Frontend: Authoritative Status Binding
-- **Script Logs Page (`Pages.scriptlogs`)**:
-  - Updated `#sl-ack` button click handler in [genmon.js](file:///Users/oz/Develop/genmon/static/js/genmon.js) to trigger `/cmd/ack_script_log?log=<tabKey>`.
-  - Updated `evalTabStatus` to bind directly to server `has_unack_error` and `has_unack_warning`.
-  - Aligned line highlighting with `last_ack_time` from server payload.
-- **Dashboard Health Tile (`Pages.status._updateScriptLogsTile`)**:
-  - Replaced client-side `Store` calculations with server-authoritative `has_unack_error` / `has_unack_warning`, resolving initial page-load race conditions.
+### Outage Debouncing & Configuration
+#### [genmonlib/controller.py](file:///Users/oz/Develop/genmon/genmonlib/controller.py)
+- Defaulted `OutageNoticeDelay` to `5` seconds (fallback when not configured), preventing transient 0V ADC/handshake readings during Modbus initialization from tripping immediate false outage detections.
+- Added defensive attribute fallbacks in `__init__` (`bDisablePlatformStats`, `UseMetric`, `debug`, `PreferredNetworkAdapter`).
 
-### Test Coverage
-- **Unit Tests**: Added [tests/unit/test_server_log_ack.py](file:///Users/oz/Develop/genmon/tests/unit/test_server_log_ack.py) covering path resolution, save/load, unack status evaluation, the command endpoint, and auto-ack on clear.
-- **E2E Browser GUI Tests**: Added [tests/gui/test_script_logs_gui.py](file:///Users/oz/Develop/genmon/tests/gui/test_script_logs_gui.py) and [tests/gui/script_logs_test_harness.html](file:///Users/oz/Develop/genmon/tests/gui/script_logs_test_harness.html) testing click interactions, tab badges, and status banner updates in headless Chrome.
+#### [conf/genmon.conf](file:///Users/oz/Develop/genmon/conf/genmon.conf)
+- Documented `outage_notice_delay = 5` in `conf/genmon.conf` explaining how the 5-second debounce filters transient ADC and communication readings.
+
+### Test Suite
+#### [tests/unit/test_notify_outage.py](file:///Users/oz/Develop/genmon/tests/unit/test_notify_outage.py)
+- Added 5 new unit tests:
+  1. `test_outage_baseline_suppresses_spurious_restoration_on_start`: Verifies starting with normal utility power does not invoke `onutilitychange` / `OnOutage(False)`.
+  2. `test_active_outage_on_startup_is_dispatched`: Verifies starting during an active outage triggers `onutilitychange(True)`.
+  3. `test_outage_and_restoration_lifecycle`: Verifies full lifecycle transitions (`False -> True` and `True -> False`).
+  4. `test_software_update_and_pi_state_startup_suppression`: Verifies clean baseline suppression for update and Pi health.
+  5. `test_default_outage_notice_delay_is_five_seconds`: Verifies the 5-second debounce fallback in `GeneratorController`.
 
 ---
 
 ## Verification Results
 
-### Unit Tests
-```bash
-python3 -m unittest discover -s tests -p "test_*.py"
-```
-```text
-Ran 109 tests in 1.857s
-OK
-```
-
-### Browser GUI Tests
-```bash
-.venv2/bin/python tests/gui/test_script_logs_gui.py
-```
-```text
-Ran 3 tests in 3.939s
-OK
-```
+### Automated Tests
+- **New Unit Tests**:
+  ```bash
+  python3 -m unittest tests/unit/test_notify_outage.py
+  # Ran 5 tests in 0.012s -> OK
+  ```
+- **Full Test Suite**:
+  ```bash
+  python3 -m unittest discover -s tests
+  # Ran 114 tests in 1.760s -> OK (0 failures, 0 errors)
+  ```
+- **Bytecode Compilation**:
+  ```bash
+  python3 -m py_compile genmonlib/mynotify.py genmonlib/controller.py tests/unit/test_notify_outage.py
+  # Clean compilation, exit code 0
+  ```
