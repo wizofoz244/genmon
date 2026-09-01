@@ -7,7 +7,7 @@
  */
 
 /** @const {string} Current cache storage name. */
-const CACHE_NAME = 'genmon-v15';
+const CACHE_NAME = 'genmon-v16';
 
 /**
  * Core assets kept for offline resilience. Navigation and dynamic API responses
@@ -113,7 +113,7 @@ self.addEventListener('push', (event) => {
     icon: data.icon || '/icons/icon-192x192.png',
     badge: '/icons/icon-192x192.png',
     vibrate: [200, 100, 200, 100, 200],
-    tag: 'genmon-push-alert',
+    tag: data.tag || ('genmon-alert-' + (data.timestamp || Date.now())),
     renotify: true,
     data: {
       url: data.url || '/'
