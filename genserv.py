@@ -23,6 +23,7 @@ import subprocess
 import sys
 import threading
 import time
+from typing import Any, Dict, Optional, Tuple
 import uuid
 
 mimetypes.add_type("text/css", ".css")
@@ -953,6 +954,118 @@ _script_logs_cache_lock = threading.Lock()
 _start_info_cache = {"timestamp": 0, "raw_data": None}
 _start_info_cache_lock = threading.Lock()
 
+_script_log_acks_lock = threading.Lock()
+_SCRIPT_LOG_ACKS_PATHS = [
+    "/etc/genmon/script_log_acks.json",
+    "./data/script_log_acks.json",
+    "./script_log_acks.json",
+]
+
+
+def get_script_log_acks_path() -> str:
+    """Resolve the storage path for the script log acknowledgments file.
+
+    Returns:
+        Absolute or relative path string to script_log_acks.json.
+    """
+    for p in _SCRIPT_LOG_ACKS_PATHS:
+        if os.path.exists(p):
+            return p
+    if os.path.isdir("/etc/genmon") and os.access("/etc/genmon", os.W_OK):
+        return "/etc/genmon/script_log_acks.json"
+    if os.path.isdir("./data"):
+        return "./data/script_log_acks.json"
+    return "./script_log_acks.json"
+
+
+def load_script_log_acks() -> Dict[str, Dict[str, Any]]:
+    """Load persisted script log acknowledgment timestamps.
+
+    Returns:
+        Dictionary mapping log key to acknowledgment details containing
+        'epoch' (float) and 'timestamp' (ISO-like string).
+    """
+    with _script_log_acks_lock:
+        path = get_script_log_acks_path()
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        return data
+            except Exception as e:
+                LogErrorLine(f"Error reading script_log_acks file ({path}): {e}")
+
+        migrated: Dict[str, Dict[str, Any]] = {}
+        try:
+            if GENMON_CONFIG in ConfigFiles:
+                raw_ui = ConfigFiles[GENMON_CONFIG].ReadValue(
+                    "ui_prefs", return_type=str, section="GenMon", default="{}"
+                )
+                if raw_ui:
+                    ui_data = json.loads(raw_ui)
+                    if isinstance(ui_data, dict):
+                        for k in ["sync", "backup", "sdcard", "watchdog", "webpush"]:
+                            ack_ms = ui_data.get(f"sl_ack_time_{k}")
+                            if ack_ms:
+                                epoch_s = float(ack_ms) / 1000.0
+                                dt_s = datetime.datetime.fromtimestamp(epoch_s).strftime("%Y-%m-%d %H:%M:%S")
+                                migrated[k] = {"epoch": epoch_s, "timestamp": dt_s}
+        except Exception as e:
+            LogDebug(f"Legacy ui_prefs migration check: {e}")
+
+        return migrated
+
+
+def save_script_log_ack(log_type: str, epoch_ts: Optional[float] = None) -> Tuple[bool, str]:
+    """Persist an acknowledgment timestamp for a given script log routine.
+
+    Args:
+        log_type: Key identifier for log routine ('sync', 'backup', 'sdcard',
+            'watchdog', 'webpush', or 'all').
+        epoch_ts: Optional UNIX epoch timestamp float. Defaults to current time.
+
+    Returns:
+        Tuple of (success boolean, formatted timestamp or error message string).
+    """
+    if epoch_ts is None:
+        epoch_ts = time.time()
+    dt_str = datetime.datetime.fromtimestamp(epoch_ts).strftime("%Y-%m-%d %H:%M:%S")
+
+    valid_types = ["sync", "backup", "sdcard", "watchdog", "webpush"]
+    targets = valid_types if log_type == "all" else [log_type]
+
+    with _script_log_acks_lock:
+        path = get_script_log_acks_path()
+        current: Dict[str, Any] = {}
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        current = data
+            except Exception:
+                current = {}
+
+        for t in targets:
+            current[t] = {"epoch": epoch_ts, "timestamp": dt_str}
+
+        try:
+            parent_dir = os.path.dirname(os.path.abspath(path))
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(current, f, indent=2)
+        except Exception as e:
+            LogErrorLine(f"Error writing script_log_acks file ({path}): {e}")
+            return False, str(e)
+
+    with _script_logs_cache_lock:
+        _script_logs_cache["timestamp"] = 0
+        _script_logs_cache["data"] = None
+
+    return True, dt_str
+
 
 def get_script_logs_json(use_cache: bool = False, ttl: int = 10):
     global _script_logs_cache
@@ -962,37 +1075,89 @@ def get_script_logs_json(use_cache: bool = False, ttl: int = 10):
             if _script_logs_cache["data"] is not None and (now - _script_logs_cache["timestamp"] < ttl):
                 return _script_logs_cache["data"]
 
-    def read_log_file(filepath):
+    acks = load_script_log_acks()
+
+    def read_log_file(filepath, log_key=""):
+        ack_info = acks.get(log_key, {})
+        ack_ts = float(ack_info.get("epoch", 0.0)) if isinstance(ack_info, dict) else 0.0
+
         if not os.path.exists(filepath):
             return {
                 "path": filepath,
                 "lines": ["Log file does not exist yet."],
                 "has_error": False,
                 "has_warning": False,
+                "has_unack_error": False,
+                "has_unack_warning": False,
+                "last_ack_time": ack_ts,
             }
+
+        try:
+            file_mtime = os.path.getmtime(filepath)
+        except Exception:
+            file_mtime = None
+
         try:
             with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
                 lines = [l.rstrip() for l in f.readlines()]
                 tail_lines = lines[-200:] if len(lines) > 200 else lines
                 has_err = False
                 has_warn = False
+                has_unack_err = False
+                has_unack_warn = False
+                last_seen_ts = None
+
                 for line in tail_lines:
                     l_low = line.lower()
+                    tm = re.search(r'(?:\[)?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})', line)
+                    if tm:
+                        try:
+                            dt_str = tm.group(1).replace("T", " ")
+                            last_seen_ts = datetime.datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S").timestamp()
+                        except Exception:
+                            pass
+                    line_ts = last_seen_ts
+
+                    is_err = False
+                    is_warn = False
                     level_match = re.search(r'\[(info|debug|warn|warning|error|critical|fatal|exception)\]', l_low)
                     if level_match:
                         lvl = level_match.group(1)
                         if lvl in ("error", "critical", "fatal", "exception"):
-                            has_err = True
+                            is_err = True
                         elif lvl in ("warn", "warning"):
-                            has_warn = True
+                            is_warn = True
+                    elif any(k in l_low for k in ["traceback (most recent call last)", "error:", "exception:"]):
+                        is_err = True
+
+                    if not is_err and not is_warn:
                         continue
-                    if any(k in l_low for k in ["traceback (most recent call last)", "error:", "exception:"]):
+
+                    is_ack = False
+                    if ack_ts > 0:
+                        if line_ts is not None:
+                            if line_ts <= ack_ts:
+                                is_ack = True
+                        elif file_mtime is not None and file_mtime <= ack_ts:
+                            is_ack = True
+
+                    if is_err:
                         has_err = True
+                        if not is_ack:
+                            has_unack_err = True
+                    if is_warn:
+                        has_warn = True
+                        if not is_ack:
+                            has_unack_warn = True
+
                 return {
                     "path": filepath,
                     "lines": tail_lines if tail_lines else ["Log file is empty."],
                     "has_error": has_err,
                     "has_warning": has_warn,
+                    "has_unack_error": has_unack_err,
+                    "has_unack_warning": has_unack_warn,
+                    "last_ack_time": ack_ts,
                 }
         except FileNotFoundError:
             return {
@@ -1000,6 +1165,9 @@ def get_script_logs_json(use_cache: bool = False, ttl: int = 10):
                 "lines": ["Log file has not been created yet. Monitoring active and connection is healthy."],
                 "has_error": False,
                 "has_warning": False,
+                "has_unack_error": False,
+                "has_unack_warning": False,
+                "last_ack_time": ack_ts,
             }
         except Exception as e:
             return {
@@ -1007,6 +1175,9 @@ def get_script_logs_json(use_cache: bool = False, ttl: int = 10):
                 "lines": [f"Error reading file: {e}"],
                 "has_error": True,
                 "has_warning": False,
+                "has_unack_error": True,
+                "has_unack_warning": False,
+                "last_ack_time": ack_ts,
             }
 
     sync_paths = [
@@ -1017,10 +1188,10 @@ def get_script_logs_json(use_cache: bool = False, ttl: int = 10):
     sync_log = None
     for p in sync_paths:
         if os.path.exists(p):
-            sync_log = read_log_file(p)
+            sync_log = read_log_file(p, "sync")
             break
     if not sync_log:
-        sync_log = read_log_file("/etc/genmon/genmaint_sync.log")
+        sync_log = read_log_file("/etc/genmon/genmaint_sync.log", "sync")
 
     backup_paths = [
         "/home/genmonpi/backup.log",
@@ -1031,10 +1202,10 @@ def get_script_logs_json(use_cache: bool = False, ttl: int = 10):
     backup_log = None
     for p in backup_paths:
         if os.path.exists(p):
-            backup_log = read_log_file(p)
+            backup_log = read_log_file(p, "backup")
             break
     if not backup_log:
-        backup_log = read_log_file("/home/genmonpi/backup.log")
+        backup_log = read_log_file("/home/genmonpi/backup.log", "backup")
 
     sd_paths = [
         "/home/genmonpi/sdcard_backup.log",
@@ -1044,10 +1215,10 @@ def get_script_logs_json(use_cache: bool = False, ttl: int = 10):
     sd_log = None
     for p in sd_paths:
         if os.path.exists(p):
-            sd_log = read_log_file(p)
+            sd_log = read_log_file(p, "sdcard")
             break
     if not sd_log:
-        sd_log = read_log_file("/home/genmonpi/sdcard_backup.log")
+        sd_log = read_log_file("/home/genmonpi/sdcard_backup.log", "sdcard")
 
     watchdog_paths = [
         "/var/log/net-watchdog.log",
@@ -1059,10 +1230,10 @@ def get_script_logs_json(use_cache: bool = False, ttl: int = 10):
     watchdog_log = None
     for p in watchdog_paths:
         if os.path.exists(p):
-            watchdog_log = read_log_file(p)
+            watchdog_log = read_log_file(p, "watchdog")
             break
     if not watchdog_log:
-        watchdog_log = read_log_file("/var/log/net-watchdog.log")
+        watchdog_log = read_log_file("/var/log/net-watchdog.log", "watchdog")
 
     webpush_paths = [
         "/var/log/genwebpush.log",
@@ -1073,10 +1244,10 @@ def get_script_logs_json(use_cache: bool = False, ttl: int = 10):
     webpush_log = None
     for p in webpush_paths:
         if os.path.exists(p):
-            webpush_log = read_log_file(p)
+            webpush_log = read_log_file(p, "webpush")
             break
     if not webpush_log:
-        webpush_log = read_log_file("/var/log/genwebpush.log")
+        webpush_log = read_log_file("/var/log/genwebpush.log", "webpush")
 
     res = {
         "sync_log": sync_log,
@@ -1154,6 +1325,7 @@ def clear_script_log_json(log_type):
             LogErrorLine(f"Error creating cleared log {primary_path}: {e}")
 
     if cleared:
+        save_script_log_ack(log_type)
         with _script_logs_cache_lock:
             _script_logs_cache["timestamp"] = 0
             _script_logs_cache["data"] = None
@@ -1506,6 +1678,13 @@ def ProcessCommand(command):
     if command.startswith("clear_script_log_json"):
         log_type = request.args.get("log", "sync")
         return clear_script_log_json(log_type)
+
+    if command.startswith("ack_script_log"):
+        if not HasWriteAccess():
+            return json.dumps({"result": "Error", "message": "Read Only Mode"})
+        log_type = request.args.get("log", "all")
+        ok, msg = save_script_log_ack(log_type)
+        return json.dumps({"result": "OK" if ok else "Error", "message": msg, "log": log_type})
 
     if command.startswith("run_backup_cmd_json"):
         if not HasWriteAccess():

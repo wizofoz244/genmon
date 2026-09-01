@@ -1,6 +1,15 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Oz Custom Addons v1.5.2 - 2026-09-01
+- **Global Server-Side Script Log Error Acknowledgment (#47)**:
+  - Migrated script log error and warning acknowledgment from client-side browser storage (`Store._c` / `genmon.conf`) to authoritative, thread-safe server-side tracking in `genserv.py` (`/etc/genmon/script_log_acks.json`).
+  - Added line-by-line timestamp comparison in `get_script_logs_json` against server acknowledgment epochs, returning `has_unack_error`, `has_unack_warning`, and `last_ack_time`.
+  - Added `/cmd/ack_script_log?log=<key>` API endpoint with instant in-memory cache invalidation.
+  - Added automatic error acknowledgment upon clearing log routines in `clear_script_log_json`.
+  - Bound Script Logs Web UI and Dashboard health tile directly to server-authoritative status flags, completely eliminating multi-tab/multi-device race conditions and stale alert badges.
+  - Added comprehensive automated unit test suite (`tests/unit/test_server_log_ack.py`) and browser GUI test suite (`tests/gui/test_script_logs_gui.py`).
+
 ## Oz Custom Addons v1.5.0 - 2026-08-31
 - **Configurable Refresh Intervals & Page Visibility Optimization**: Added user-configurable refresh intervals for Background Services and Script Logs status tiles under **Settings -> Monitor** (persisting across devices via `Store`); added Page Visibility API support to pause polling when browser tab is hidden and resume on focus; added dynamic query parameter `ttl` scaling and compact JSON serialization (`separators=(',', ':')`) in `genserv.py`.
 - **Refactoring to Google Standards**: Refactored all custom Python modules (`genwebpush.py`, `genmaint_sync.py`, test suite) to strict Google Python Style Guide (typing, Google docstrings with Args/Returns/Raises, modularity).
