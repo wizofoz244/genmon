@@ -1,20 +1,26 @@
-# Task List: Chart Formatting, Smoothing & Readability Enhancements
+# Task List: Session Auth Loop, Service Worker Fallback & Connection Starvation Fixes
 
-- [x] **Phase 1: Planning & Setup**
-  - [x] Create GitHub Issue #43 <!-- id: 1 -->
-  - [x] Create & switch to feature branch `feature/chart-formatting-smoothing` <!-- id: 2 -->
-  - [x] Persist SDLC docs (`docs/IMPLEMENTATION_PLAN.md`, `docs/TASK_LIST.md`) <!-- id: 3 -->
+- [x] **Phase 1: Planning & Issue Tracking**
+  - [x] Create GitHub Issue #46 <!-- id: 1 -->
+  - [x] Create dedicated branch `fix/session-auth-loop-and-sw-fallback` <!-- id: 2 -->
+  - [x] Persist SDLC documentation in `docs/` <!-- id: 3 -->
 - [x] **Phase 2: Implementation**
-  - [x] Implement moving average / smoothing computation in `static/js/genmon.js` <!-- id: 4 -->
-  - [x] Add view mode toggle (`Trend`, `Dual`, `Raw`) and persistence in `Store` <!-- id: 5 -->
-  - [x] Optimize fill and Y-axis scaling/padding for Pi Voltage in `static/js/genmon.js` <!-- id: 6 -->
-  - [x] Add live summary stats bar (`Cur`, `Min`, `Max`, `Avg`) to chart headers in `static/js/genmon.js` <!-- id: 7 -->
-  - [x] Add styling for stats badges and mode toggle pills in `static/css/genmon.css` <!-- id: 8 -->
+  - [x] Return 401 Unauthorized JSON for unauthenticated `/cmd/` in `genserv.py` <!-- id: 4 -->
+  - [x] Replace `location.href = '/'` with `location.replace('/logout')` in `static/js/genmon.js` <!-- id: 5 -->
+  - [x] Add `{ ignoreSearch: true }` in `static/sw.js` for query-string asset matching <!-- id: 6 -->
+  - [x] Stagger heavy 30-day chart and auxiliary queries in `static/js/genmon.js` <!-- id: 7 -->
+  - [x] Increase `ajaxTimeout` to 25s for WAN/Funnel stability <!-- id: 8 -->
+  - [x] Add `-t` / `--tailscale-reset` opt-in flag to `startgenmon.sh` to preserve Funnel proxies <!-- id: 9 -->
+  - [x] Defer secondary modal push preference loading in `static/js/pwa-push.js` <!-- id: 10 -->
+  - [x] Add explicit `for="..."` attributes to form labels in `templates/index.html` <!-- id: 11 -->
+  - [x] Add timestamped notification tags in `addon/genwebpush.py` and `static/sw.js` for Android alert stacking <!-- id: 12 -->
+  - [x] Bump cache name to `genmon-v16` <!-- id: 13 -->
 - [x] **Phase 3: Verification & Automated Tests**
-  - [x] Run python compile / sanity checks (`python3 -m py_compile ...`) <!-- id: 9 -->
-  - [x] Add automated GUI test suite validating chart controls, mode switching, and stats badges <!-- id: 10 -->
-  - [x] Execute Playwright / GUI tests locally (Headless Chrome) <!-- id: 11 -->
+  - [x] Add integration test for unauthenticated 401 response <!-- id: 14 -->
+  - [x] Execute full unit & integration test suite (63 unit + 3 integration tests passing) <!-- id: 15 -->
+  - [x] Compile Python and check bash script syntax <!-- id: 16 -->
+  - [x] Validate cross-platform latency via curl on macOS and Windows PowerShell <!-- id: 17 -->
 - [x] **Phase 4: Remote Push & Review**
-  - [x] Create walkthrough artifact (`docs/WALKTHROUGH.md`) <!-- id: 12 -->
-  - [x] Commit and push to `origin/feature/chart-formatting-smoothing` <!-- id: 13 -->
-  - [x] Output secondary machine sync commands <!-- id: 14 -->
+  - [x] Save walkthrough artifact (`docs/WALKTHROUGH.md`) <!-- id: 18 -->
+  - [x] Commit and push all changes to `origin/fix/session-auth-loop-and-sw-fallback` <!-- id: 19 -->
+  - [x] Merge cleanly to `main` <!-- id: 20 -->

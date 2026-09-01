@@ -364,9 +364,12 @@
 
     $(document).ready(function() {
         window.GenmonPWA.init();
-        window.GenmonPWA.loadPreferences();
-        window.GenmonPWA.loadSubscribedDevices();
-        window.GenmonPWA.autoFillDeviceName();
+        /* Defer secondary modal data fetches so initial page boot and telemetry get 100% bandwidth */
+        setTimeout(function() {
+            window.GenmonPWA.loadPreferences();
+            window.GenmonPWA.loadSubscribedDevices();
+            window.GenmonPWA.autoFillDeviceName();
+        }, 3000);
     });
 
 })();

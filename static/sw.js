@@ -7,7 +7,7 @@
  */
 
 /** @const {string} Current cache storage name. */
-const CACHE_NAME = 'genmon-v14';
+const CACHE_NAME = 'genmon-v16';
 
 /**
  * Core assets kept for offline resilience. Navigation and dynamic API responses
@@ -18,9 +18,11 @@ const SHELL_ASSETS = [
   '/css/genmon.css',
   '/js/genmon.js',
   '/js/addon-icons.js',
+  '/js/system-theme.js',
   '/favicon.ico',
   '/icons/icon-192x192.png',
   '/icons/icon-512x512.png',
+  '/icons/icon-maskable-512x512.png',
   '/manifest.webmanifest'
 ];
 
@@ -77,7 +79,7 @@ self.addEventListener('fetch', (event) => {
         return response;
       })
       .catch(async () => {
-        const cached = await caches.match(req);
+        const cached = await caches.match(req, { ignoreSearch: true });
         if (cached) return cached;
         return new Response('Network unavailable or service restarting', {
           status: 503,
@@ -111,7 +113,7 @@ self.addEventListener('push', (event) => {
     icon: data.icon || '/icons/icon-192x192.png',
     badge: '/icons/icon-192x192.png',
     vibrate: [200, 100, 200, 100, 200],
-    tag: 'genmon-push-alert',
+    tag: data.tag || ('genmon-alert-' + (data.timestamp || Date.now())),
     renotify: true,
     data: {
       url: data.url || '/'

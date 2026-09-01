@@ -937,7 +937,7 @@ def command(command):
         except Exception as e1:
             return commandResponse
     if not session.get("logged_in"):
-        return _render_login()
+        return jsonify({"status": "error", "message": "Authentication required", "auth": False}), 401
     else:
         commandResponse = ProcessCommand(command)
         try:

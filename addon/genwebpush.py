@@ -697,6 +697,7 @@ def SendWebPushPayload(
             "category": category,
             "icon": icon,
             "timestamp": int(time.time() * 1000),
+            "tag": f"genmon-{category}-{int(time.time() * 1000)}",
         }
         payload_data = json.dumps(payload_dict).encode("utf-8")
 

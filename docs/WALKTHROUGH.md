@@ -1,67 +1,54 @@
-# Walkthrough: Chart Formatting, Smoothing & Visual Readability Improvements
+# Walkthrough: Session Auth Loop, Service Worker Fallback & Connection Starvation Fixes
 
-Implemented visual formatting, noise filtering, and data readability improvements for Genmon telemetry charts—specifically addressing the "barcode" effect on Pi Voltage and enhancing CPU Temperature and Power Output graphs.
+Resolved the session expiration redirection loop, Service Worker query parameter cache misses, Tailscale cloud proxy restarts, HTTP/1.1 connection pool starvation, and Android notification tag collapsing.
+
+---
 
 ## Summary of Key Changes
 
-### 1. Moving Average / Trend Line Smoothing
-* **Time-Window Centered Rolling Average**: Implemented `_computeMovingAverage(points, windowMs)` in [`static/js/genmon.js`](file:///Users/oz/Develop/genmon/static/js/genmon.js) using an $O(N)$ two-pointer sliding window.
-* **Proportional Rolling Windows**:
-  * `1h`: 3-minute smoothing window
-  * `6h`: 10-minute smoothing window
-  * `24h`: 25-minute smoothing window
-  * `7d`: 2-hour smoothing window
-  * `30d`: 6-hour smoothing window
-* Converts high-frequency DVFS stepping noise into a clean, intuitive trend line showing true power and thermal trajectories.
+### 1. Authentication Loop & Session Expiration Fix
+* **Backend (`genserv.py`)**: When an unauthenticated request hits `/cmd/<command>`, `genserv.py` now returns an explicit `HTTP 401 Unauthorized` JSON payload (`{"status": "error", "message": "Authentication required", "auth": False}`) instead of returning the HTML login page with HTTP 200.
+* **Frontend (`static/js/genmon.js`)**: Updated `API.get` and `API.set` failure handlers to detect HTTP 401 and invoke `window.location.replace('/logout')` rather than navigating to `/`. This ensures expired session cookies are actively cleared by Flask before showing the login form.
 
-### 2. View Mode Toggling (`Trend`, `Dual`, `Raw`)
-* Added mode toggle buttons on the chart controls bar:
-  * **Trend (Default for Voltage)**: Clean smoothed moving-average line with subtle area tinting.
-  * **Dual**: Faint raw stepping in the background (`borderWidth: 1`) with the bold moving-average curve overlaid in the foreground (`borderWidth: 2.2`).
-  * **Raw**: Unfiltered raw data points with zero area fill (`fill: false`).
-* Toggling between modes uses in-memory cached telemetry data for instantaneous updates with zero network latency.
-* Saved persistently across sessions via `Store` (`localStorage`).
+### 2. Service Worker Query String Normalization
+* **Asset Caching (`static/sw.js`)**: Configured `caches.match(req, { ignoreSearch: true })` so requests with version query parameters (e.g. `?v=1782662125`) successfully match pre-cached assets.
+* **Cache Versioning**: Bumped cache name to `genmon-v16`.
 
-### 3. Removal of Barcode Area Fill on Voltage
-* Disabled the bottom area fill (`fill: false`) on raw voltage waveforms so high-frequency oscillations never merge into solid vertical blocks.
+### 3. HTTP/1.1 6-Connection Starvation & Timeout Resilience
+* **Staggered Heavy Queries (`static/js/genmon.js`)**: Deferred 30-day power graphs (`power_log_json=43200`) and 24-hour temperature charts by 350ms–600ms on startup. Primary telemetry (`gui_status_json`) receives 100% of initial socket bandwidth.
+* **Eliminated Redundant Startup Polling**: Removed duplicate simultaneous `status_json` invocation during status page rendering.
+* **Increased AJAX Timeout**: Raised `ajaxTimeout` from 10s to 25s for WAN and Tailscale Funnel stability.
+* **Deferred Push Modal Loading (`static/js/pwa-push.js`)**: Delayed secondary Web Push preference fetching by 3s so initial page boot is completely unblocked.
 
-### 4. Intelligent Y-Axis Scaling & Padding
-* Enforced a minimum visible vertical span of $0.35\text{ V}$ with 10% padding for voltage charts.
-* Normal 0.10–0.15 V DVFS stepping variations no longer span 100% of the canvas height, placing the signal comfortably in the center.
+### 4. Zero-Downtime Tailscale Funnel Restarts
+* **Smart Funnel Preservation (`startgenmon.sh`)**: On `start` or `restart`, checks if Tailscale Funnel is already active on the configured protocol and port (`https+insecure://127.0.0.1:8443`). If active, skips `tailscale funnel reset`, eliminating the 30–60 second cloud proxy teardown.
+* **New Switch**: Added `-t` / `--tailscale-reset` to allow users to force a proxy reset when needed.
 
-### 5. Live Summary Statistics Bar
-* Added real-time summary statistics badge (`Cur`, `Min`, `Max`, `Avg`) directly under chart titles for Pi Voltage, CPU Temp, and Power Output:
-  * Pi Voltage: `Cur: 1.34 V | Min: 1.23 V | Max: 1.35 V | Avg: 1.31 V`
-  * CPU Temp: `Cur: 119° | Min: 100° | Max: 119° | Avg: 106°`
-  * Power Output: `Cur: 0.0 kW | Min: 0.0 kW | Max: 5.2 kW | Avg: 0.8 kW`
-* Dynamically updates whenever the time range or data refreshes.
+### 5. Android Web Push Notification Stacking
+* **Unique Tags (`addon/genwebpush.py`, `static/sw.js`)**: Replaced static `genmon-push-alert` tag with timestamped identifiers (`genmon-{category}-{timestamp}`). Android now stacks consecutive alerts into separate cards instead of overwriting earlier ones.
+
+### 6. Accessibility (a11y) Form Labels
+* **Label Association (`templates/index.html`)**: Added explicit `for="..."` attributes linking all 13 form labels in `#pwa-push-modal` to their respective form input IDs.
 
 ---
 
 ## Verification & Automated Test Results
 
-### 1. End-to-End Headless Browser GUI Tests
-Author: [`tests/gui/test_chart_formatting_gui.py`](file:///Users/oz/Develop/genmon/tests/gui/test_chart_formatting_gui.py)
-* **Test 1 (`test_no_javascript_runtime_errors`)**: Verified zero JS console or runtime errors during chart and page lifecycle.
-* **Test 2 (`test_summary_statistics_displayed_and_calculated`)**: Verified live stats badges (`Cur`, `Min`, `Max`, `Avg`) display and compute accurately.
-* **Test 3 (`test_mode_toggling_trend_dual_raw`)**: Simulated real user clicks across `Dual`, `Raw`, and `Trend` mode pills and asserted dataset transitions and fill properties.
-* **Test 4 (`test_intelligent_voltage_y_axis_padding`)**: Asserted Y-axis minimum span $\ge 0.35\text{ V}$.
-
-```
-....
-----------------------------------------------------------------------
-Ran 4 tests in 3.113s
-
-OK
+### 1. Integration Tests
+* Added `test_cmd_unauthenticated_returns_401` in [`tests/integration/test_genserv_web_integration.py`](file:///Users/oz/Develop/genmon/tests/integration/test_genserv_web_integration.py).
+* Ran full test suite:
+```text
+Ran 63 unit tests in 0.580s: OK
+Ran 3 integration tests in 0.002s: OK
 ```
 
-### 2. Full Unit Test Suite
-* Executed `python3 -m unittest discover -s tests/unit`:
-```
-Ran 63 tests in 0.871s
+### 2. Syntax & Compilation Checks
+* Python compilation: `python3 -m py_compile genserv.py addon/genwebpush.py` passed with code 0.
+* Bash script validation: `bash -n startgenmon.sh` passed with code 0.
+* JavaScript validation: `jsc` validated `static/js/genmon.js`, `static/sw.js`, and `static/js/pwa-push.js`.
 
-OK
-```
-
-### 3. Syntax & Bytecode Compilation
-* Executed `python3 -m py_compile genserv.py genmon.py genmonlib/*.py`: Clean exit (0).
+### 3. Cross-Platform Latency Benchmarks
+* Local loopback HTTP: 0.002s (2 ms)
+* Local loopback HTTPS: 0.049s (49 ms)
+* Remote Funnel macOS: 0.12s–0.81s
+* Remote Funnel Windows PowerShell: 0.44s–1.96s
