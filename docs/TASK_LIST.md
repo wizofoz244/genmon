@@ -1,14 +1,21 @@
-# Task List - Suppress Spurious Utility Outage Notifications on Restart (Issue #49)
+# Task List: Optimize GenMaintSync Log Extraction & Eliminate CPU Peg
 
-- [ ] 1. Update `genmonlib/mynotify.py` <!-- id: 1 -->
-  - [ ] 1.1 In `GetOutageState()`, guard `LastOutageStatus is None and not OutageState` to set baseline `LastOutageStatus = False` without dispatching event <!-- id: 1.1 -->
-  - [ ] 1.2 In `GetMonitorState()`, guard `LastSoftwareUpdateStatus` and `LastPiState` against uninitialized false-positive notifications <!-- id: 1.2 -->
-- [ ] 2. Update `genmonlib/controller.py` and `conf/genmon.conf` <!-- id: 2 -->
-  - [ ] 2.1 Set default `outage_notice_delay` to 5 seconds in `genmonlib/controller.py` <!-- id: 2.1 -->
-  - [ ] 2.2 Add and document `outage_notice_delay = 5` in `conf/genmon.conf` <!-- id: 2.2 -->
-- [ ] 3. Author Unit Tests <!-- id: 3 -->
-  - [ ] 3.1 Create `tests/unit/test_notify_outage.py` verifying startup baseline suppression and active outage detection <!-- id: 3.1 -->
-  - [ ] 3.2 Verify test coverage and pass status <!-- id: 3.2 -->
-- [ ] 4. Documentation & Git Sync <!-- id: 4 -->
-  - [ ] 4.1 Update `docs/WALKTHROUGH.md` <!-- id: 4.1 -->
-  - [ ] 4.2 Auto-commit and push to `origin/fix/outage-notification-on-restart` <!-- id: 4.2 -->
+- [x] **Phase 1: Planning & Issue Tracking**
+  - [x] Create GitHub Issue #54 <!-- id: 1 -->
+  - [x] Create dedicated branch `fix/genmaint-sync-cpu-peg` <!-- id: 2 -->
+  - [x] Persist SDLC documentation in `docs/` <!-- id: 3 -->
+- [x] **Phase 2: Implementation**
+  - [x] Rewrite `extract_run_sessions` in `addon/genmaint_sync.py` to single-pass O(N) state machine <!-- id: 4 -->
+  - [x] Add file `mtime` modification checks and non-gz filtering to `fetch_file_logs` <!-- id: 5 -->
+  - [x] Maintain session caching in `_cached_run_sessions` across incremental sync passes <!-- id: 6 -->
+  - [x] Correct 3-tuple return type annotations for `fetch_controller_logs` <!-- id: 7 -->
+- [x] **Phase 3: Verification & Automated Tests**
+  - [x] Add 10,000-line performance benchmark unit test in `tests/unit/test_genmaint_sync.py` <!-- id: 8 -->
+  - [x] Add interleaved running event and gap handling test cases <!-- id: 9 -->
+  - [x] Run full unit and integration test suites (80/80 tests passing) <!-- id: 10 -->
+  - [x] Verify on Raspberry Pi hardware via one-shot run and systemd service `top` check <!-- id: 11 -->
+- [x] **Phase 4: Remote Push, Merge & Review**
+  - [x] Update walkthrough artifact (`docs/WALKTHROUGH.md`) <!-- id: 12 -->
+  - [x] Commit and push changes to `origin/fix/genmaint-sync-cpu-peg` <!-- id: 13 -->
+  - [x] Merge cleanly to `main` and close Issue #54 <!-- id: 14 -->
+  - [x] Clean up local and remote feature branch <!-- id: 15 -->

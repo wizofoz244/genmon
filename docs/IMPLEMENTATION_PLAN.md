@@ -1,45 +1,46 @@
-# Implementation Plan - Suppress Spurious Utility Outage Notifications on Restart
+# Implementation Plan: Optimize GenMaintSync Log Extraction & Eliminate CPU Peg
 
-Address spurious "Genmon Utility Outage" push notifications dispatched to subscribers upon Genmon daemon restart (Issue #49).
+Resolve the runaway ~100% CPU burn in `genmaint_sync.py` by converting quadratic session extraction to an $O(N)$ linear state machine and adding file mtime caching.
 
-## Problem & Background
+## Problem Analysis
+1. **Quadratic $O(N^2)$ While Loop**: In `extract_run_sessions()`, an engine run event without a matching stop event triggered a forward scan across the entire dataset. In large or fragmented log files with thousands of lines, this resulted in millions of operations, pegging Raspberry Pi CPU at ~100%.
+2. **Unbounded Historical Disk Re-scanning**: On every 300-second daemon poll interval, `fetch_file_logs()` re-globbed and re-read all rotated historical log files (`/var/log/genmon.log*`) from disk, repeating the entire quadratic calculation over and over.
 
-When Genmon restarts (via `startgenmon.sh restart`, web UI restart, or service restart), users occasionally receive a push notification titled **"Genmon Utility Outage"** (typically with body **"Utility Power RESTORED."**, or transiently **"Utility Power OUTAGE Detected!"** followed seconds later by restoration).
-
-### Root Causes
-1. **Uninitialized `LastOutageStatus` in `GenNotify` (`genmonlib/mynotify.py`)**:
-   - `GenNotify` starts with `self.LastOutageStatus = None`.
-   - On the first polling cycle, if utility power is normal (`OutageState = False`), `ProcessEventData` checks `lastvalue == eventdata` (`None == False`), which evaluates to `False`.
-   - It treats this startup baseline reading as an event transition, invoking `OnOutage(False)` -> `SendWebPushPayload("Genmon Utility Outage", "Utility Power RESTORED.", category="outage")`.
-2. **Transient 0V Reading on Serial Modbus Startup Handshake (`genmonlib/controller.py`, `genmonlib/generac_evolution.py`)**:
-   - Register `0009` (Utility Voltage) can momentarily report 0V or encounter a port sync delay during `InitDevice`.
-   - With `outage_notice_delay = 0` (default), `0V < 143V` immediately sets `self.SystemInOutage = True`, triggering an active outage alert before nominal voltage (240V) is read seconds later.
+---
 
 ## Proposed Changes
 
-### 1. Notification Event Dispatch Engine (`genmonlib/mynotify.py`)
-- In `GetOutageState()`, guard the initial poll when `self.LastOutageStatus is None`.
-  - If `OutageState is False` (utility power normal on boot), initialize `self.LastOutageStatus = False` without calling `ProcessEventData("OUTAGE", False, None)`.
-  - If `OutageState is True` (daemon booted during a real active outage), dispatch `ProcessEventData("OUTAGE", True, None)` so active outage alerts are preserved.
-- Apply similar initial-baseline guards for `SOFTWAREUPDATE` and `PISTATE` to prevent spurious startup alerts.
+### Addon Daemon Optimization
 
-### 2. Controller Outage Filtering (`genmonlib/controller.py` & `conf/genmon.conf`)
-- In `genmonlib/controller.py`, update the default `outage_notice_delay` fallback from `0` to `5` seconds to filter momentary 0V ADC/handshake readings.
-- In `conf/genmon.conf`, document `outage_notice_delay = 5`.
+#### [MODIFY] [`addon/genmaint_sync.py`](file:///Users/oz/Develop/genmon/addon/genmaint_sync.py)
+* **$O(N)$ State Machine**: Replace nested while loop in `extract_run_sessions()` with a single-pass linear loop tracking `current_start` and matching transitions in $O(N)$ time.
+* **Incremental `mtime` Caching**: In `fetch_file_logs()`, only scan rotated logs on initial startup; on subsequent daemon ticks, check `os.path.getmtime()` and skip reading unchanged files.
+* **Preserve Run Sessions Cache**: Maintain `_cached_run_sessions` across polling passes so new events are computed against complete session history with zero redundant computation.
 
-### 3. Unit & Integration Tests (`tests/unit/test_notify_outage.py`)
-- Author comprehensive tests in `tests/unit/test_notify_outage.py`:
-  - Verify clean startup with normal utility power (`OutageState = False`) does NOT dispatch `onutilitychange` / `OnOutage(False)`.
-  - Verify startup during active outage (`OutageState = True`) DOES dispatch `onutilitychange(True)`.
-  - Verify subsequent transitions (`False -> True` and `True -> False`) properly dispatch outage and restoration callbacks.
-  - Verify `outage_notice_delay` default filters transient 0V readings.
+### Automated Unit Tests
+
+#### [MODIFY] [`tests/unit/test_genmaint_sync.py`](file:///Users/oz/Develop/genmon/tests/unit/test_genmaint_sync.py)
+* Add `test_extract_run_sessions_linear_scale` benchmarking 10,000 log lines in under 0.2s.
+* Add `test_extract_run_sessions_interleaved_events` testing multiple continuous running events, orphaned stops, and gap handling.
+
+---
 
 ## Verification Plan
 
 ### Automated Tests
-- Run `python3 -m unittest tests/unit/test_notify_outage.py`
-- Run full test suite `python3 -m unittest discover -s tests`
-- Run `python3 -m py_compile genmonlib/mynotify.py genmonlib/controller.py`
+* Execute full test suite:
+  ```bash
+  python3 -m unittest discover -s tests/unit
+  python3 -m unittest tests/integration/test_genserv_web_integration.py
+  ```
+* Verify Python syntax compilation:
+  ```bash
+  python3 -m py_compile addon/genmaint_sync.py
+  ```
 
-### Manual / Integration Verification
-- Inspect output logs and ensure 0 regression across existing 109 tests.
+### Live Daemon Verification
+* Verify one-shot execution completes in milliseconds:
+  ```bash
+  python3 addon/genmaint_sync.py -c /etc/genmon -1
+  ```
+* Verify CPU utilization of `genmaint_sync.service` drops to 0.0% via `top`.
