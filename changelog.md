@@ -1,6 +1,14 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Oz Custom Addons v1.5.3 - 2026-09-01
+- **Suppress Spurious Utility Outage Notifications on Restart (#49)**:
+  - Guarded initial baseline state in `genmonlib/mynotify.py`: when `self.LastOutageStatus` is `None` and `OutageState` is `False` (normal utility power on boot), initializes baseline `LastOutageStatus = False` without invoking `ProcessEventData("OUTAGE", False, None)`, eliminating spurious "Utility Power RESTORED" notifications upon daemon restart.
+  - Preserved active power failure alerts: if Genmon boots during an active outage (`OutageState is True`), `OnOutage(True)` alert continues to be immediately dispatched.
+  - Guarded initial baseline states for `SOFTWAREUPDATE` and `PISTATE` to suppress spurious startup notices.
+  - Added 5-second `outage_notice_delay` debounce in `genmonlib/controller.py` and `conf/genmon.conf` to absorb transient 0V readings during Modbus serial port handshake and ADC stabilization.
+  - Added comprehensive automated unit test suite in `tests/unit/test_notify_outage.py` (5/5 tests passing, 114/114 full suite passing).
+
 ## Oz Custom Addons v1.5.2 - 2026-09-01
 - **Global Server-Side Script Log Error Acknowledgment (#47)**:
   - Migrated script log error and warning acknowledgment from client-side browser storage (`Store._c` / `genmon.conf`) to authoritative, thread-safe server-side tracking in `genserv.py` (`/etc/genmon/script_log_acks.json`).

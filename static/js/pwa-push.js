@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------
-// PWA & Web Push Notification Handler v1.5.0 (Includes Inline Device Rename & WebPush Log)
+// PWA & Web Push Notification Handler v1.5.3 (Includes Inline Device Rename & WebPush Log)
 // -------------------------------------------------------------------------------
 
 (function() {
