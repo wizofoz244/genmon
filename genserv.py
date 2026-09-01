@@ -950,6 +950,8 @@ def command(command):
 # -------------------------------------------------------------------------------
 _script_logs_cache = {"timestamp": 0, "data": None}
 _script_logs_cache_lock = threading.Lock()
+_start_info_cache = {"timestamp": 0, "raw_data": None}
+_start_info_cache_lock = threading.Lock()
 
 
 def get_script_logs_json(use_cache: bool = False, ttl: int = 10):
@@ -1482,6 +1484,9 @@ def ProcessCommand(command):
         with _services_cache_lock:
             _services_cache["timestamp"] = 0
             _services_cache["data"] = None
+        with _start_info_cache_lock:
+            _start_info_cache["timestamp"] = 0
+            _start_info_cache["raw_data"] = None
         Restart()
         return json.dumps({"result": "OK", "message": "Service restart initiated."})
 
@@ -1622,7 +1627,26 @@ def ProcessCommand(command):
                     input = request.args["set_button_command"]
                     input = input.replace("\x00", "").replace("\n", " ").replace("\r", " ")[:512]
                     finalcommand += "=" + input
-                data = MyClientInterface.ProcessMonitorCommand(finalcommand)
+
+                data = None
+                if command in ["start_info_json", "gui_start_json", "start_json"]:
+                    nocache = False
+                    try:
+                        nocache = request.args.get("nocache", "0") in ("1", "true")
+                    except Exception:
+                        pass
+                    if not nocache:
+                        with _start_info_cache_lock:
+                            if _start_info_cache["raw_data"] is not None:
+                                data = _start_info_cache["raw_data"]
+
+                if data is None:
+                    data = MyClientInterface.ProcessMonitorCommand(finalcommand)
+                    if command in ["start_info_json", "gui_start_json", "start_json"]:
+                        if data and data != "Retry" and str(data).startswith("{"):
+                            with _start_info_cache_lock:
+                                _start_info_cache["raw_data"] = data
+                                _start_info_cache["timestamp"] = time.time()
 
             except Exception as e1:
                 data = "Retry"
@@ -1661,7 +1685,7 @@ def ProcessCommand(command):
                                 StartInfo["pages"]["settings"] = False
                                 StartInfo["pages"]["notifications"] = False
                         StartInfo["LoginActive"] = LoginActive()
-                        data = json.dumps(StartInfo, sort_keys=False)
+                        data = json.dumps(StartInfo, sort_keys=False, separators=(',', ':'))
                     except Exception as e1:
                         LogErrorLine("Error in JSON parse / decode: " + str(e1))
                 return data
