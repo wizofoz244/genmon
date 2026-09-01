@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="../../static/css/genmon.css">
+  <script src="../../static/js/jquery-4.0.0.min.js"></script>
+  <script src="../../static/js/chart.min.js"></script>
+  <script>
+    window.errors = [];
+    window.onerror = function(msg, url, line) {
+      window.errors.push({msg: msg, line: line});
+    };
+  </script>
+  <script src="../../static/js/genmon.js"></script>
+</head>
+<body>
+  <div id="tile-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;padding:20px;"></div>
+  <script>
+    function setupCharts() {
+      var Pages = Genmon.pages;
+      var Store = Genmon.store;
+      Genmon.state.sensors = ['Pi Voltage', 'CPU Temp'];
+
+      var h = Pages.status._tempChartTileHtml('Pi Voltage') +
+              Pages.status._tempChartTileHtml('CPU Temp');
+      $('#tile-grid').html(h);
+      Pages.status._initTempChart('Pi Voltage');
+      Pages.status._initTempChart('CPU Temp');
+
+      // Bind click handlers identical to genmon.js main setup
+      var $c = $('#tile-grid');
+      $c.off('click').on('click', '.chart-btn', function() {
+        var sensor = $(this).data('sensor');
+        var $tile = $(this).closest('.tile-chart');
+        $tile.find('.chart-range-group .chart-btn, .chart-controls > .chart-btn').removeClass('active');
+        $(this).addClass('active');
+        if (sensor) {
+          Pages.status._loadTempChart(sensor, $(this).data('mins'));
+        }
+      });
+      $c.on('click', '.chart-mode-btn', function() {
+        var sensor = $(this).data('sensor');
+        var mode = $(this).data('mode');
+        var $tile = $(this).closest('.tile-chart');
+        $tile.find('.chart-mode-btn').removeClass('active');
+        $(this).addClass('active');
+        if (sensor) {
+          var slug = Store.slugify(sensor);
+          Store.set('chart-mode-' + slug, mode);
+          var entry = Pages.status._tempCharts[sensor];
+          var mins = entry && entry.currentMins ? entry.currentMins : ($tile.find('.chart-btn.active').data('mins') || 1440);
+          Pages.status._loadTempChart(sensor, mins, entry ? entry.rawData : null);
+        }
+      });
+
+      // Generate mock high-frequency stepping voltage data
+      var now = Date.now();
+      var mockVoltData = [];
+      for (var m = 360; m >= 0; m--) {
+        var t = new Date(now - m * 60000);
+        var mm = String(t.getMonth() + 1).padStart(2, '0');
+        var dd = String(t.getDate()).padStart(2, '0');
+        var yy = String(t.getFullYear()).slice(-2);
+        var hh = String(t.getHours()).padStart(2, '0');
+        var mi = String(t.getMinutes()).padStart(2, '0');
+        var ss = String(t.getSeconds()).padStart(2, '0');
+        var ts = mm + '/' + dd + '/' + yy + ' ' + hh + ':' + mi + ':' + ss;
+        var val = (m % 2 === 0) ? 1.345 : 1.235;
+        mockVoltData.push({ raw: ts, val: val, date: t });
+      }
+      Pages.status._tempCharts['Pi Voltage'].rawData = mockVoltData;
+      Pages.status._loadTempChart('Pi Voltage', 360, mockVoltData);
+    }
+    $(function() {
+      setupCharts();
+    });
+  </script>
+</body>
+</html>
