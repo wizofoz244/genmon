@@ -204,8 +204,13 @@ class GenNotify(MyCommon):
 
         if OutageState != None:
             if self.notify_outage:
-                self.ProcessEventData("OUTAGE", OutageState, self.LastOutageStatus)
-                self.LastOutageStatus = OutageState
+                if self.LastOutageStatus is None and not OutageState:
+                    # Initial baseline reading with normal utility power. Establish baseline
+                    # without dispatching a false restoration notification.
+                    self.LastOutageStatus = False
+                else:
+                    self.ProcessEventData("OUTAGE", OutageState, self.LastOutageStatus)
+                    self.LastOutageStatus = OutageState
 
         return OutageState
 
@@ -226,12 +231,15 @@ class GenNotify(MyCommon):
                         else:
                             UpdateAvailable = False
                         if self.notify_sw_update:
-                            self.ProcessEventData(
-                                "SOFTWAREUPDATE",
-                                UpdateAvailable,
-                                self.LastSoftwareUpdateStatus,
-                            )
-                            self.LastSoftwareUpdateStatus = UpdateAvailable
+                            if self.LastSoftwareUpdateStatus is None and not UpdateAvailable:
+                                self.LastSoftwareUpdateStatus = False
+                            else:
+                                self.ProcessEventData(
+                                    "SOFTWAREUPDATE",
+                                    UpdateAvailable,
+                                    self.LastSoftwareUpdateStatus,
+                                )
+                                self.LastSoftwareUpdateStatus = UpdateAvailable
                     if key == "Monitor Health":
                         if self.notify_info:
                             self.ProcessEventData(
@@ -261,8 +269,11 @@ class GenNotify(MyCommon):
                 if PiStats == "":
                     PiStats = "OK"
                 if PiPresent:
-                    self.ProcessEventData("PISTATE", PiStats, self.LastPiState)
-                    self.LastPiState = PiStats
+                    if self.LastPiState is None and PiStats == "OK":
+                        self.LastPiState = "OK"
+                    else:
+                        self.ProcessEventData("PISTATE", PiStats, self.LastPiState)
+                        self.LastPiState = PiStats
         except Exception as e1:
             # The system does no support outage tracking (i.e. H-100)
             self.LogErrorLine("Unable to get moniotr state: " + str(e1))

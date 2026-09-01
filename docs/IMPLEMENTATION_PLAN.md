@@ -1,64 +1,45 @@
-# Implementation Plan: Session Auth Loop, Service Worker Fallback & Connection Starvation Fixes
+# Implementation Plan - Suppress Spurious Utility Outage Notifications on Restart
 
-Resolve authentication loop redirects, Service Worker query parameter cache misses, Tailscale cloud proxy restarts, HTTP/1.1 connection pool starvation, and Android notification tag collapsing.
+Address spurious "Genmon Utility Outage" push notifications dispatched to subscribers upon Genmon daemon restart (Issue #49).
 
-## Problem Analysis
-1. **Unauthenticated API Responses**: When a session expired or unauthenticated API calls were made to `/cmd/<command>`, `genserv.py` rendered the full HTML login page with HTTP 200 OK. Client-side AJAX parsed this as success or string data, causing redirection loops back to `/` instead of cleanly logging out via `/logout`.
-2. **Service Worker Query Parameter Cache Misses**: `caches.match(req)` in `static/sw.js` evaluated full request URLs including cache-busting `?v=...` query strings. Missing query string normalization caused asset cache misses.
-3. **HTTP/1.1 6-Connection Starvation**: On initial dashboard load, Genmon fired 9+ simultaneous heavy AJAX queries (`power_log_json=43200`, `sensor_log_json`, `script_logs_json`, `services_status_json`, `gui_status_json`, `status_json`). Chrome restricts HTTP/1.1 to 6 concurrent sockets, starving queued status telemetry and tripping false "Connection Lost" banners.
-4. **Tailscale Funnel 60s Proxy Downtime on Restart**: `startgenmon.sh restart` executed `tailscale funnel reset`, tearing down global Tailscale cloud edge proxies and TLS sessions on every restart.
-5. **Android Notification Collapsing**: Static `tag: 'genmon-push-alert'` caused Android notification manager to overwrite earlier notifications in-place.
-6. **Accessibility Form Labels**: Missing `for="..."` attributes on `<label>` elements in the Web Push preferences modal triggered DevTools accessibility warnings.
+## Problem & Background
 
----
+When Genmon restarts (via `startgenmon.sh restart`, web UI restart, or service restart), users occasionally receive a push notification titled **"Genmon Utility Outage"** (typically with body **"Utility Power RESTORED."**, or transiently **"Utility Power OUTAGE Detected!"** followed seconds later by restoration).
+
+### Root Causes
+1. **Uninitialized `LastOutageStatus` in `GenNotify` (`genmonlib/mynotify.py`)**:
+   - `GenNotify` starts with `self.LastOutageStatus = None`.
+   - On the first polling cycle, if utility power is normal (`OutageState = False`), `ProcessEventData` checks `lastvalue == eventdata` (`None == False`), which evaluates to `False`.
+   - It treats this startup baseline reading as an event transition, invoking `OnOutage(False)` -> `SendWebPushPayload("Genmon Utility Outage", "Utility Power RESTORED.", category="outage")`.
+2. **Transient 0V Reading on Serial Modbus Startup Handshake (`genmonlib/controller.py`, `genmonlib/generac_evolution.py`)**:
+   - Register `0009` (Utility Voltage) can momentarily report 0V or encounter a port sync delay during `InitDevice`.
+   - With `outage_notice_delay = 0` (default), `0V < 143V` immediately sets `self.SystemInOutage = True`, triggering an active outage alert before nominal voltage (240V) is read seconds later.
 
 ## Proposed Changes
 
-### Backend Authentication & Daemon Control
+### 1. Notification Event Dispatch Engine (`genmonlib/mynotify.py`)
+- In `GetOutageState()`, guard the initial poll when `self.LastOutageStatus is None`.
+  - If `OutageState is False` (utility power normal on boot), initialize `self.LastOutageStatus = False` without calling `ProcessEventData("OUTAGE", False, None)`.
+  - If `OutageState is True` (daemon booted during a real active outage), dispatch `ProcessEventData("OUTAGE", True, None)` so active outage alerts are preserved.
+- Apply similar initial-baseline guards for `SOFTWAREUPDATE` and `PISTATE` to prevent spurious startup alerts.
 
-#### [MODIFY] [`genserv.py`](file:///Users/oz/Develop/genmon/genserv.py)
-* Return `401 Unauthorized` JSON payload (`{"status": "error", "message": "Authentication required", "auth": False}`) on unauthenticated `/cmd/<command>` requests.
+### 2. Controller Outage Filtering (`genmonlib/controller.py` & `conf/genmon.conf`)
+- In `genmonlib/controller.py`, update the default `outage_notice_delay` fallback from `0` to `5` seconds to filter momentary 0V ADC/handshake readings.
+- In `conf/genmon.conf`, document `outage_notice_delay = 5`.
 
-#### [MODIFY] [`startgenmon.sh`](file:///Users/oz/Develop/genmon/startgenmon.sh)
-* Preserve active Tailscale Funnel / Serve configuration on restart; add `-t` / `--tailscale-reset` opt-in flag.
-
-#### [MODIFY] [`addon/genwebpush.py`](file:///Users/oz/Develop/genmon/addon/genwebpush.py)
-* Add unique timestamped notification tags (`genmon-{category}-{timestamp}`) to push payloads.
-
-### Frontend UI, Telemetry & Service Worker
-
-#### [MODIFY] [`static/js/genmon.js`](file:///Users/oz/Develop/genmon/static/js/genmon.js)
-* Detect 401 HTTP status and invoke `window.location.replace('/logout')`.
-* Increase `ajaxTimeout` from 10s to 25s for WAN/Funnel stability.
-* Stagger heavy 30-day chart and auxiliary tile requests to prevent HTTP/1.1 socket exhaustion.
-* Eliminate redundant startup status telemetry polling.
-
-#### [MODIFY] [`static/sw.js`](file:///Users/oz/Develop/genmon/static/sw.js)
-* Add `{ ignoreSearch: true }` to `caches.match()`.
-* Update notification tag to unique timestamped identifier.
-* Bump cache name to `genmon-v16`.
-
-#### [MODIFY] [`static/js/pwa-push.js`](file:///Users/oz/Develop/genmon/static/js/pwa-push.js)
-* Defer secondary modal preference fetches to prioritize initial page boot bandwidth.
-
-#### [MODIFY] [`templates/index.html`](file:///Users/oz/Develop/genmon/templates/index.html)
-* Add explicit `for="..."` attributes linking all 13 form labels in `#pwa-push-modal` to input IDs.
-
----
+### 3. Unit & Integration Tests (`tests/unit/test_notify_outage.py`)
+- Author comprehensive tests in `tests/unit/test_notify_outage.py`:
+  - Verify clean startup with normal utility power (`OutageState = False`) does NOT dispatch `onutilitychange` / `OnOutage(False)`.
+  - Verify startup during active outage (`OutageState = True`) DOES dispatch `onutilitychange(True)`.
+  - Verify subsequent transitions (`False -> True` and `True -> False`) properly dispatch outage and restoration callbacks.
+  - Verify `outage_notice_delay` default filters transient 0V readings.
 
 ## Verification Plan
 
 ### Automated Tests
-* Execute unit test suite and integration tests:
-  ```bash
-  python3 -m unittest discover -s tests/unit
-  python3 -m unittest tests/integration/test_genserv_web_integration.py
-  ```
-* Verify Python syntax compilation:
-  ```bash
-  python3 -m py_compile genserv.py addon/genwebpush.py
-  ```
-* Validate bash script syntax:
-  ```bash
-  bash -n startgenmon.sh
-  ```
+- Run `python3 -m unittest tests/unit/test_notify_outage.py`
+- Run full test suite `python3 -m unittest discover -s tests`
+- Run `python3 -m py_compile genmonlib/mynotify.py genmonlib/controller.py`
+
+### Manual / Integration Verification
+- Inspect output logs and ensure 0 regression across existing 109 tests.
