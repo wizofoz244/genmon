@@ -155,7 +155,7 @@ var Store = {
   _pull: function(cb) {
     var self = this;
     $.ajax({url: CFG.baseUrl + 'get_ui_prefs',
-      dataType:'text', async:true, timeout:4000
+      dataType:'text', async:true, timeout: CFG.ajaxTimeout
     }).done(function(raw) {
       if (raw && raw.charAt(0) === '{') {
         try {
@@ -185,7 +185,7 @@ var Store = {
     try {
       $.ajax({url: CFG.baseUrl + 'set_ui_prefs?set_ui_prefs=' +
         encodeURIComponent(JSON.stringify(this._c)),
-        dataType:'text', timeout:4000});
+        dataType:'text', timeout: CFG.ajaxTimeout});
     } catch(e) {}
   },
 
@@ -7876,7 +7876,7 @@ function init() {
   $('#sidebar-overlay').on('click', function(){ Nav.closeMobile(); });
   $('#theme-toggle').on('click', function(){ Theme.toggle(); });
 
-  API.get('start_info_json', 10000)
+  API.get('start_info_json', CFG.ajaxTimeout)
     .done(function(data) {
       if (!data || data === 'Retry' || (typeof data === 'string' && (data.indexOf('Retry') >= 0 || data.indexOf('<form') >= 0 || data.indexOf('<!DOCTYPE') >= 0))) {
         if (typeof data === 'string' && (data.indexOf('<form') >= 0 || data.indexOf('<!DOCTYPE') >= 0)) {
