@@ -56,9 +56,9 @@
                                  }
                                  ]
          },
-        {
+         {
             "onewordcommand" : "pzremotestarttransfer",
-            "title" : "Remote Start and Transfer",
+            "title" : "Alternate Remote Start and Transfer",
             "command_sequence" : [
                                  {
                                     "reg": "0004",
@@ -70,10 +70,24 @@
                                  },
                                  {
                                     "reg": "0003",
-                                    "value": "0028"
+                                    "comment": "both 00028 and 0019 appear to support remote start commands",
+                                    "value": "0019"
                                  }
                                  ]
          },
+        {
+            "onewordcommand" : "pzremotestarttransfertest",
+            "title" : "Remote Start and Transfer Test",
+            "tooltip": "Run the generator with the transfer switch activated for the exercise cycle duration.",
+            "command_sequence" : [
+                                 {
+                                    "reg": "0003",
+                                    "comment": "both 00028 and 0019 appear to support remote start commands",
+                                    "value": "00028"
+                                 }
+                                 ]
+         },
+         
          {
             "onewordcommand" : "exerciseduration",
             "title" : "Exercise Duration",

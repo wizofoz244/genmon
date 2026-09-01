@@ -62,7 +62,7 @@ IDENTITY_REG_LENGTH = 10
 POWER_ZONE_200_ALARM_REG = 0x21CA 
 POWER_ZONE_200_ALARM_LENGTH = 40
 # Power Zone 200 Warning registers
-POWER_ZONE_200_WARNING_REG = 0x2199
+POWER_ZONE_200_WARNING_REG = 0x2198
 POWER_ZONE_200_WARNING_LENGTH = 21
 
 NEXUS_ALARM_LOG_STARTING_REG = 0x064
@@ -287,8 +287,6 @@ class Evolution(GeneratorController):
             "05f5": [2, 0],  # Evo AC   Current 2
             "05f6": [2, 0],  # Evo AC   Current Cal 1
             "05f7": [2, 0],  # Evo AC   Current Cal 1
-            "0637": [2, 0],  # Power Zone 200 Alarm is active if non zero
-            "0638": [2, 0],  # Power Zone 200 Warning is active if non zero
             "0639": [2, 0],  # Power Zone 200 Maintenance is active if non zero
             "063a": [2, 0],  # Power Zone 200 single phase if non zero
             "07e6": [2, 0],  # Firmware Build Major
@@ -331,6 +329,8 @@ class Evolution(GeneratorController):
             "0052": [2, 0],  # Evo LC Inputs
             "0009": [2, 0],  # Utility voltage
             "05f1": [2, 0],  # Last Alarm Code
+            "0637": [2, 0],  # Power Zone 200 Alarm is active if non zero
+            "0638": [2, 0],  # Power Zone 200 Warning is active if non zero
         }  
 
         self.REGLEN = 0
@@ -2708,9 +2708,8 @@ class Evolution(GeneratorController):
             if len(self.UserURL):
                 msgbody += "For additional information : " + self.UserURL + "\n"
 
-            if (
-                self.SystemInAlarm()
-            ):  # Update Alarm Status global flag, returns True if system in alarm
+            if self.SystemInAlarm():  
+                # Update Alarm Status global flag, returns True if system in alarm
 
                 msgsubject += "Generator Alert at " + self.SiteName + ": "
                 AlarmState = self.GetAlarmState()
@@ -2731,6 +2730,22 @@ class Evolution(GeneratorController):
                 msgbody += "NOTE: This message is a notice that the state of the generator has changed. The system is not in alarm.\n"
 
             msgbody += self.GetMessageText(Reg0001Value=RegVal)
+
+            if self.UseAuxAlarmLog:
+                alarm_state = self.GetAlarmState()
+                if self.PowerZone200:
+                    e_code = f"{RegVal & 0x0000FFFF:04}"
+                    alarm_state = f"{alarm_state}, Alarm Code: {e_code}"
+                elif self.EvolutionController:
+                    last_alarm_value = self.GetRegisterValueFromList("05f1")  # get last error code
+                    if len(last_alarm_value) == 4:
+                        last_alarm_code = int(last_alarm_value, 16)
+                        e_code = f"{last_alarm_code:04}"
+                        alarm_state = f"{alarm_state}, Alarm Code: {e_code}"
+                # or Evo/Nexus the alarm notifications are sent differently than the other controllers
+                # due to Evo2 register 0001 oddities so NotifyAlarmCommon does not send the messages for
+                # evo/nexus
+                self.NotifyAlarmCommon(msgbody = None, alarm_details = alarm_state)
 
             if self.SystemInAlarm():
                 msgbody += self.printToString(
@@ -3202,12 +3217,21 @@ class Evolution(GeneratorController):
                 [SERVICELOG, SERVICE_LOG_STARTING_REG, SERVICE_LOG_STRIDE],
                 [STARTSTOPLOG, START_LOG_STARTING_REG, START_LOG_STRIDE],
             ]
+            PowerZone200Log = [
+                [SERVICELOG, SERVICE_LOG_STARTING_REG, SERVICE_LOG_STRIDE],
+                [STARTSTOPLOG, START_LOG_STARTING_REG, START_LOG_STRIDE],
+            ]
             NexusLog = [
                 [ALARMLOG, NEXUS_ALARM_LOG_STARTING_REG, NEXUS_ALARM_LOG_STRIDE],
                 [STARTSTOPLOG, START_LOG_STARTING_REG, START_LOG_STRIDE],
             ]
 
-            LogParams = EvolutionLog if self.EvolutionController else NexusLog
+            if self.PowerZone200:
+                LogParams = PowerZone200Log
+            elif self.EvolutionController:
+                LogParams = EvolutionLog
+            else:
+                LogParams = NexusLog
 
             RetValue = collections.OrderedDict()
             LogDict = collections.OrderedDict()
@@ -3218,6 +3242,13 @@ class Evolution(GeneratorController):
                 )
                 LogDict = self.MergeDicts(LogDict, LogOutput)
 
+            if self.UseAuxAlarmLog and not RawOutput:
+                alarm_list = self.ReadAuxAlarm()
+                if len(alarm_list) and AllLogs == False:
+                    alarm_list = alarm_list[0]
+                AuxAlarmLog = {"Auxiliary Alarm Log": alarm_list}
+                LogDict = self.MergeDicts(LogDict, AuxAlarmLog)
+            
             if self.PowerZone200 and RawOutput:
                 PowerZoneAlarmRegs = {}
                 for Register in range(POWER_ZONE_200_ALARM_REG,POWER_ZONE_200_ALARM_REG+POWER_ZONE_200_ALARM_LENGTH):
@@ -3234,6 +3265,9 @@ class Evolution(GeneratorController):
 
             UnknownFound = False
             for Key, Entries in RetValue["Logs"].items():
+                if "Auxiliary Alarm Log" in Key:
+                    # don't check aux alarm log for unknown values
+                    continue
                 if not AllLogs:
                     if "unknown" in Entries.lower():
                         UnknownFound = True
@@ -3252,7 +3286,7 @@ class Evolution(GeneratorController):
                     "Logs", FullLogs=True, Always=True, Message="Unknown Entries in Log"
                 )
         except Exception as e1:
-            self.LogErrorLine("Error in DisplayLogs: " + str(e1))
+            self.LogErrorLine(f"Error in DisplayLogs: {e1}, AllLogs: {AllLogs}, DictOut: {DictOut}, RawOutput: {RawOutput}")
 
         if not DictOut:
             return self.printToString(self.ProcessDispatch(RetValue, ""))
@@ -3731,7 +3765,7 @@ class Evolution(GeneratorController):
                     # returning unknown here is OK since ParseLogEntry will look up a code also
                     return "Warning Code Unknown: %d" % int(ErrorCode, 16)
                 else:
-                    # This can occur if the controller was power cycled and not alarms have occurred since power applied
+                    # This can occur if the controller was power cycled and no alarms have occurred since power applied
                     return "Error Code 0000: No alarms occured since controller has been power cycled.\n"
 
             with open(self.AlarmFile, "r") as AlarmFile:  # opens file
@@ -3919,7 +3953,21 @@ class Evolution(GeneratorController):
             0x4e: "Battery Potential / Power Input 1",  # Evo4.5L
             0x4f: "Engine Oil Temperature 1",           # Evo4.5L
             0x50: "Engine Fuel Shutoff 1 Control",      # Evo4.5L
-            0x72: "No Rotation Warning"   # Evo 2.0  validated
+            # EvoLC 4.5L
+            0x5C: "Engine Fuel Shutoff 2 Control",
+            0x5C: "Engine Fuel Shutoff 2 Control",
+            0x51: "Engine Position Sensor",
+            0x52: "Engine Timing Sensor",
+            0x53: "O2 Sensor",
+            0x54: "Engine Knock 1",
+            0x55: "Engine Ignition Coil #1",
+            0x56: "Engine Ignition Coil #2",
+            0x57: "Engine Ignition Coil #3",
+            0x58: "Engine Ignition Coil #4",
+            0x59: "Engine Fuel Valve 1 Position",
+            0x5A: "Engine Charge Air Cooler 1 Bypass",
+            0x5B: "Engine Speed",
+            0x72: "No Rotation Warning",   # Evo 2.0  validated
             # 0x74 : "Controller Lost Connection to Server"    # Evolution 2.0 not validated
         }
 
@@ -3948,7 +3996,7 @@ class Evolution(GeneratorController):
             return ""
         if not self.SystemInAlarm():
             return ""
-        
+
         PowerZone200_Alarms = {
             "2198": "Warning - BATTERY VOLT LOW",
             "2199": "Warning - BATTERY PROBLEM",
@@ -4014,12 +4062,19 @@ class Evolution(GeneratorController):
         }
         try:
             alarm_list = []
-
+            # there are alarm flag registers and the lower word of registers 0001 contains an E-Code.
+            # check the E-Code first
+            Value = self.GetRegisterValueFromList("0001")
+            if len(Value) == 8:
+                AlarmStr = self.GetAlarmInfo(Value[-4:], ReturnNameOnly=True)
+                if not "unknown" in AlarmStr.lower():
+                    alarm_list.append(AlarmStr)
+            # now check the flag registers
             for Register in range(POWER_ZONE_200_ALARM_REG, POWER_ZONE_200_ALARM_REG+POWER_ZONE_200_ALARM_LENGTH):
                 RegStr = "%04x" % Register
                 Value = self.GetRegisterValueFromList(RegStr)
                 if len(Value) != 4:
-                    return ""
+                    continue
                 RegVal = int(Value, 16)
                 if RegVal != 0:
                     alarm_list.append(PowerZone200_Alarms.get(RegStr, f"UNKNOWN ALARM: {RegStr}:{RegVal:04x}"))
@@ -4028,20 +4083,25 @@ class Evolution(GeneratorController):
                 RegStr = "%04x" % Register
                 Value = self.GetRegisterValueFromList(RegStr)
                 if len(Value) != 4:
-                    return ""
+                    continue
                 RegVal = int(Value, 16)
                 if RegVal != 0:
                     alarm_list.append(PowerZone200_Alarms.get(RegStr, f"UNKNOWN WARNING: {RegStr}:{RegVal:04x}"))
-
+            if len(alarm_list) == 0:
+                return "Unknown Alarm"
             return ", ".join(alarm_list)
 
         except Exception as e1:
             self.LogErrorLine(f"Error in GetAlarmStatePowerZone200: {e1}")
-            return ""
+            return "Unknown Alarm"
     # ------------ Evolution:Reg0001IsValid -------------------------------------
     def Reg0001IsValid(self, regvalue):
 
-        if regvalue & 0xFFE0FFC0:
+        if self.PowerZone200:
+            # low word returns e-code on PZ200
+            if regvalue & 0xffe00000:
+                return False
+        elif regvalue & 0xFFE0FFC0:
             return False
         return True
 
@@ -4084,6 +4144,8 @@ class Evolution(GeneratorController):
                 # Power Zone 200 only that can be signaled while in off 
                 # or auto mode
                 if regvalue == 0x00170000:
+                    return self.LastAlarmValue
+                if self.BitIsEqual(regvalue, 0x001F0000, 0x00170000):
                     return self.LastAlarmValue
 
             if not self.Evolution2:
@@ -4308,9 +4370,9 @@ class Evolution(GeneratorController):
             else:
                 return "Running"
         elif self.BitIsEqual(RegVal, 0x001F0000, 0x001b0000):
-                    return "Running Remote Transfer"  # Power Zone 200
+            return "Running Remote Transfer"  # Power Zone 200
         elif self.BitIsEqual(RegVal, 0x001F0000, 0x00180000):
-                            return "Running - Utility Loss"  # Power Zone 200
+            return "Running - Transfer Switch Activated"  # Power Zone 200
         elif self.BitIsEqual(RegVal, 0x001F0000, 0x00090000):
             return "Stopped with Inhibit Active"
         elif self.BitIsEqual(RegVal, 0x001F0000, 0x00080000):
@@ -5927,9 +5989,6 @@ class Evolution(GeneratorController):
                 )
                 self.CurrentOffset = self.config.ReadValue(
                     "currentoffset", return_type=float, default=None, NoLog=True
-                )
-                self.UseFuelSensor = self.config.ReadValue(
-                    "usesensorforfuelgauge", return_type=bool, default=True
                 )
                 self.IgnoreUnknown = self.config.ReadValue(
                     "ignore_unknown", return_type=bool, default=True

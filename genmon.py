@@ -497,6 +497,7 @@ class Monitor(MySupport):
                         recipient=self.MaintainerAddress,
                         files=self.GetLogFileNames(),
                         msgtype="error",
+                        force_text=True
                     )
                 # delete unsent Messages
                 if os.path.isfile(self.FeedbackLogFile):
@@ -537,6 +538,7 @@ class Monitor(MySupport):
                 files=MessageDict["files"],
                 deletefile=MessageDict["deletefile"],
                 msgtype=MessageDict["msgtype"],
+                force_text=MessageDict["force_text"]
             )
 
         except Exception as e1:
@@ -583,6 +585,7 @@ class Monitor(MySupport):
                         recipient=self.MaintainerAddress,
                         files=self.GetLogFileNames(),
                         msgtype="error",
+                        force_text=True
                     )
 
                 self.FeedbackMessages[Reason] = msgbody
@@ -667,6 +670,7 @@ class Monitor(MySupport):
                 "genhomeassistant.log",
                 "genhalink.log",
                 "gentankutil.log",
+                "genneevo.log",
                 "genalexa.log",
                 "gensnmp.log",
                 "gentemp.log",
@@ -679,7 +683,8 @@ class Monitor(MySupport):
             ]
             DataFilesToSend = [
                 "update.txt",        # time stamp of software update
-                "restore.txt"
+                "restore.txt",
+                "aux_alarmlog.json"
             ]
             # Files in /var/log
             for File in FilesToSend:
@@ -735,6 +740,7 @@ class Monitor(MySupport):
                 recipient=self.MaintainerAddress,
                 files=LogList,
                 msgtype="error",
+                force_text=True
             )
             return "Log files submitted"
         except Exception as e1:
@@ -892,6 +898,7 @@ class Monitor(MySupport):
                     True,
                 ],  # Do not do command.lower() since this input is JSON
                 "clear_maint_log": [self.Controller.ClearMaintLog, (), True],
+                "clear_aux_alarm_log": [self.Controller.ClearAuxAlarmLog, (), True],
                 "getsitename": [self.GetSiteName, (), True],
                 "getbase": [
                     self.Controller.GetBaseStatus,

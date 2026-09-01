@@ -795,6 +795,8 @@ def do_admin_login():
         CheckFailedLogin()
         return _render_login()
     else:
+        LogError(f"Unknown login error: user: {request.form['username']}")
+        LogError(f"admin ok: {admin_user_ok}, admin pass ok: {admin_pass_ok}, ro user: {ro_user_ok}, ro pass: {ro_pass_ok}")
         return _render_login()
 
 
@@ -1739,6 +1741,7 @@ def ProcessCommand(command):
             "get_maint_log_json",
             "add_maint_log",
             "clear_maint_log",
+            "clear_aux_alarm_log",
             "delete_row_maint_log",
             "edit_row_maint_log",
             "support_data_json",
@@ -3585,6 +3588,74 @@ def GetAddOns():
             display_name="Check for Missed Readings",
         )
 
+        # GENNEEVO
+        AddOnCfg["genneevo"] = collections.OrderedDict()
+        AddOnCfg["genneevo"]["enable"] = ConfigFiles[GENLOADER_CONFIG].ReadValue(
+            "enable", return_type=bool, section="genneevo", default=False
+        )
+        AddOnCfg["genneevo"]["title"] = "Nee Vo Tank Fuel Monitor"
+        AddOnCfg["genneevo"][
+            "description"
+        ] = "Integrates Nee-Vo propane tank sensor data"
+        AddOnCfg["genneevo"]["icon"] = "neevo"
+        AddOnCfg["genneevo"][
+            "url"
+        ] = "https://github.com/jgyates/genmon/wiki/1----Software-Overview#genneevopy-optional"
+        AddOnCfg["genneevo"]["parameters"] = collections.OrderedDict()
+        AddOnCfg["genneevo"]["parameters"]["tank_name"] = CreateAddOnParam(
+        ConfigFiles[GENNEEVO_CONFIG].ReadValue(
+                "tank_name", return_type=str, default=""
+            ),
+            "string",
+            "Tank name",
+            bounds="minmax:1:50",
+            display_name="Tank Name",
+        )
+        AddOnCfg["genneevo"]["parameters"]["username"] = CreateAddOnParam(
+            ConfigFiles[GENNEEVO_CONFIG].ReadValue(
+                "username", return_type=str, default=""
+            ),
+            "string",
+            "Username from Nee-vo app",
+            bounds="required email",
+            display_name="Username",
+        )
+        AddOnCfg["genneevo"]["parameters"]["password"] = CreateAddOnParam(
+            ConfigFiles[GENNEEVO_CONFIG].ReadValue(
+                "password", return_type=str, default=""
+            ),
+            "password",
+            "Password from Nee-vo app",
+            bounds="minmax:4:50",
+            display_name="Password",
+        )
+        AddOnCfg["genneevo"]["parameters"]["capacity"] = CreateAddOnParam(
+            ConfigFiles[GENNEEVO_CONFIG].ReadValue(
+                "capacity", return_type=int, default=0
+            ),
+            "int",
+            "Tank capacity in gallons. Set to 0 to use on line data.",
+            bounds="number",
+            display_name="Tank Capacity (gallons)",
+        )
+        AddOnCfg["genneevo"]["parameters"]["serial_number"] = CreateAddOnParam(
+            ConfigFiles[GENNEEVO_CONFIG].ReadValue(
+                "serial_number", return_type=str, default=""
+            ),
+            "string",
+            "Optional: only use a specific tank by serial number (leave blank for first tank)",
+            bounds="",
+            display_name="Serial Number",
+        )
+        AddOnCfg["genneevo"]["parameters"]["poll_frequency"] = CreateAddOnParam(
+            ConfigFiles[GENNEEVO_CONFIG].ReadValue(
+                "poll_frequency", return_type=float, default=0
+            ),
+            "float",
+            "The duration in minutes between poll of tank data.",
+            bounds="number",
+            display_name="Poll Frequency",
+        )
         # GENTANKDIY
         AddOnCfg["gentankdiy"] = collections.OrderedDict()
         AddOnCfg["gentankdiy"]["enable"] = ConfigFiles[GENLOADER_CONFIG].ReadValue(
@@ -4296,6 +4367,7 @@ def SaveAddOnSettings(query_string):
             "genexercise": ConfigFiles[GENEXERCISE_CONFIG],
             "genemail2sms": ConfigFiles[GENEMAIL2SMS_CONFIG],
             "gentankutil": ConfigFiles[GENTANKUTIL_CONFIG],
+            "genneevo": ConfigFiles[GENNEEVO_CONFIG],
             "gencentriconnect": ConfigFiles[GENCENTRICONNECT_CONFIG],
             "gentankdiy": ConfigFiles[GENTANKDIY_CONFIG],
             "genalexa": ConfigFiles[GENALEXA_CONFIG],
@@ -4323,16 +4395,12 @@ def SaveAddOnSettings(query_string):
                         "enable", basevalues, section=module
                     )
                     # TODO This may not be needed now
-                    if module == "gentankutil":
+                    if module in ["gentankutil", "gentankdiy", "genneevo"]:
                         # update genmon.conf also to let it know that it should watch for external fuel data
                         ConfigFiles[GENMON_CONFIG].WriteValue(
                             "use_external_fuel_data", basevalues, section="genmon"
                         )
-                    if module == "gentankdiy":
-                        # update genmon.conf also to let it know that it should watch for external fuel data
-                        ConfigFiles[GENMON_CONFIG].WriteValue(
-                            "use_external_fuel_data_diy", basevalues, section="genmon"
-                        )
+
                     if module == "genhalink" and basevalues.lower() == "true":
                         # Auto-generate API key if empty when addon is enabled
                         current_key = ConfigFiles[GENHALINK_CONFIG].ReadValue(
@@ -4771,7 +4839,17 @@ def ReadAdvancedSettingsFromFile():
             GENMON_SECTION,
             "alternate_date_format",
         ]
-
+        ConfigSettings["use_aux_alarm_log"] = [
+            "boolean",
+            "Use Auxiliary Alarm Log",
+            27,
+            False,
+            "",
+            0,
+            GENMON_CONFIG,
+            GENMON_SECTION,
+            "use_aux_alarm_log",
+        ]
         # These settings are not displayed as the auto-detect controller will set these
         # these are only to be used to override the auto-detect
         # ConfigSettings["liquidcooled"] = ['boolean', 'Force Controller Type (cooling)', 30, False, "", 0, GENMON_CONFIG, GENMON_SECTION, "liquidcooled"]
@@ -8482,6 +8560,7 @@ if __name__ == "__main__":
     GENEXERCISE_CONFIG = os.path.join(ConfigFilePath, "genexercise.conf")
     GENEMAIL2SMS_CONFIG = os.path.join(ConfigFilePath, "genemail2sms.conf")
     GENTANKUTIL_CONFIG = os.path.join(ConfigFilePath, "gentankutil.conf")
+    GENNEEVO_CONFIG = os.path.join(ConfigFilePath, "genneevo.conf")
     GENCENTRICONNECT_CONFIG = os.path.join(ConfigFilePath, "gencentriconnect.conf")
     GENTANKDIY_CONFIG = os.path.join(ConfigFilePath, "gentankdiy.conf")
     GENALEXA_CONFIG = os.path.join(ConfigFilePath, "genalexa.conf")
@@ -8513,6 +8592,7 @@ if __name__ == "__main__":
         GENEXERCISE_CONFIG,
         GENEMAIL2SMS_CONFIG,
         GENTANKUTIL_CONFIG,
+        GENNEEVO_CONFIG,
         GENCENTRICONNECT_CONFIG,
         GENTANKDIY_CONFIG,
         GENALEXA_CONFIG,
