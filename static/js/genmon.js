@@ -774,6 +774,15 @@ var Poll = {
       Poll.fetchPage();
     }
   },
+  pause: function() {
+    this.stopAll();
+  },
+  resume: function() {
+    this.start();
+    if (S.currentPage && S.currentPage !== 'status') {
+      this.setPage(S.currentPage);
+    }
+  },
   fetchStatus: function() {
     if (Poll._statusInFlight) return;
     Poll._statusInFlight = true;
@@ -835,13 +844,18 @@ var Poll = {
         Pages.status._updateWeatherTile();
         if (!S._servPollTick) S._servPollTick = 0;
         S._servPollTick++;
-        // Stagger auxiliary tile polling: services tile every 10 ticks (~30s) at offset 2
-        if (S._servPollTick % 10 === 2) {
-          if (!Store.isTileHidden('services')) Pages.status._updateServicesTile();
+
+        var servSec = parseInt(Store.get('servicesPollSec', 30), 10) || 30;
+        var logSec = parseInt(Store.get('scriptlogsPollSec', 60), 10) || 60;
+        var servIntervalTicks = Math.max(1, Math.round(servSec / (CFG.pollMs / 1000)));
+        var logIntervalTicks = Math.max(2, Math.round(logSec / (CFG.pollMs / 1000)));
+
+        // Stagger auxiliary tile polling using user-configured intervals
+        if (S._servPollTick % servIntervalTicks === 0) {
+          if (!Store.isTileHidden('services')) Pages.status._updateServicesTile(servSec);
         }
-        // Stagger scriptlogs tile every 20 ticks (~60s) at offset 7
-        if (S._servPollTick % 20 === 7) {
-          if (!Store.isTileHidden('scriptlogs')) Pages.status._updateScriptLogsTile();
+        if (S._servPollTick % logIntervalTicks === Math.min(1, logIntervalTicks - 1)) {
+          if (!Store.isTileHidden('scriptlogs')) Pages.status._updateScriptLogsTile(logSec);
         }
         /* Auto-show weather tile when data arrives for the first time */
         if (S.weather && S.weather.length && !Store.get('weatherSeen')) {
@@ -877,6 +891,15 @@ var Poll = {
     });
   }
 };
+
+/* Pause high-frequency polling when tab is hidden, resume immediately when tab is active */
+$(document).on('visibilitychange', function() {
+  if (document.hidden) {
+    Poll.pause();
+  } else {
+    Poll.resume();
+  }
+});
 
 /* ============================================================
    ALERT BAR  — non-blocking system warnings
@@ -2227,12 +2250,13 @@ var Pages = {
         '</div></div>';
     },
 
-    _updateScriptLogsTile: function() {
+    _updateScriptLogsTile: function(sec) {
       var $b = $('#scriptlogs-tile-body');
       if (!$b.length || Pages.status._logsInFlight) return;
       Pages.status._logsInFlight = true;
 
-      API.get('script_logs_json').always(function() {
+      var ttl = sec || parseInt(Store.get('scriptlogsPollSec', 60), 10) || 60;
+      API.get('script_logs_json?ttl=' + ttl).always(function() {
         Pages.status._logsInFlight = false;
       }).done(function(d) {
         if (!d) return;
@@ -2323,12 +2347,13 @@ var Pages = {
         '</div></div>';
     },
 
-    _updateServicesTile: function() {
+    _updateServicesTile: function(sec) {
       var $b = $('#services-tile-body');
       if (!$b.length || Pages.status._servicesInFlight) return;
       Pages.status._servicesInFlight = true;
 
-      API.get('services_status_json').always(function() {
+      var ttl = sec || parseInt(Store.get('servicesPollSec', 30), 10) || 30;
+      API.get('services_status_json?ttl=' + ttl).always(function() {
         Pages.status._servicesInFlight = false;
       }).done(function(d) {
         if (!d || !d.services) return;
@@ -5659,14 +5684,26 @@ var Pages = {
         } else {
           (buckets[c.id] || []).forEach(function(s) { h += UI.formField(s.key, s.def, s.def[3]); });
         }
-        /* Inject Modbus page toggle into Monitor panel */
+        /* Inject Modbus page toggle and Tile Refresh Intervals into Monitor panel */
         if (c.id === 'system') {
+          var servPoll = Store.get('servicesPollSec', 30);
+          var logPoll = Store.get('scriptlogsPollSec', 60);
           h += '<div class="form-group setting-field" data-label="show modbus page">' +
             '<div class="setting-toggle-row">' +
             '<label class="toggle"><input type="checkbox" id="set-modbus-toggle"' +
             (showModbus ? ' checked' : '') + '><span class="toggle-slider"></span></label>' +
             '<label class="setting-toggle-label" for="set-modbus-toggle">Show Modbus Page</label></div>' +
             '<div class="form-hint">Show the Modbus registers page in the navigation menu</div></div>';
+
+          h += '<div class="form-group setting-field" data-label="background services refresh interval">' +
+            '<label class="form-label" for="set-services-poll-sec">Background Services Tile Refresh (seconds)</label>' +
+            '<input type="number" class="form-input" id="set-services-poll-sec" min="3" max="300" value="' + esc(servPoll) + '">' +
+            '<div class="form-hint">Dashboard tile poll interval for background processes & Tailscale status (default: 30s)</div></div>';
+
+          h += '<div class="form-group setting-field" data-label="script logs refresh interval">' +
+            '<label class="form-label" for="set-scriptlogs-poll-sec">Script Logs Tile Refresh (seconds)</label>' +
+            '<input type="number" class="form-input" id="set-scriptlogs-poll-sec" min="5" max="300" value="' + esc(logPoll) + '">' +
+            '<div class="form-hint">Dashboard tile poll interval for script error/warning flags (default: 60s)</div></div>';
         }
         /* Save bar at bottom of each category panel */
         h += '<div class="set-save-bar"><button class="btn btn-success set-save-cat">'+btnIcon('save')+' Save Settings</button></div>';
@@ -5862,6 +5899,25 @@ var Pages = {
         Store._flush();
         Nav.build(S.startInfo ? S.startInfo.pages : null);
         Nav.setActive('settings');
+      });
+
+      /* --- Dashboard tile refresh interval inputs --- */
+      $w.on('change', '#set-services-poll-sec', function() {
+        var v = parseInt($(this).val(), 10) || 30;
+        v = Math.max(3, Math.min(300, v));
+        $(this).val(v);
+        Store.set('servicesPollSec', v);
+        Store._flush();
+        Toast.show('Background services tile refresh set to ' + v + 's', 'success');
+      });
+
+      $w.on('change', '#set-scriptlogs-poll-sec', function() {
+        var v = parseInt($(this).val(), 10) || 60;
+        v = Math.max(5, Math.min(300, v));
+        $(this).val(v);
+        Store.set('scriptlogsPollSec', v);
+        Store._flush();
+        Toast.show('Script logs tile refresh set to ' + v + 's', 'success');
       });
 
       /* --- Advanced mode toggle --- */
@@ -7590,7 +7646,7 @@ function init() {
         $('#site-name').text(data.sitename);
         document.title = data.sitename + ' \u2014 Genmon';
       }
-      var addonVersion = 'Oz Custom Addons v1.4.0';
+      var addonVersion = 'Oz Custom Addons v1.5.0';
       if (data.version) $('#footer-version').text('Genmon ' + data.version + ' \u2014 ' + addonVersion);
 
       /* Enable logout & cache purge button for all users */
