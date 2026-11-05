@@ -19,7 +19,10 @@ log() {
 # Emergency Signal Trap & Resource Cleanup
 cleanup() {
     local rc=$?
-    # Unmount temporary image backup mount points if left behind
+    # Unmount temporary image backup mount points if left behind (boot first, then root)
+    if mountpoint -q /tmp/img-backup-mnt/boot 2>/dev/null; then
+        sudo umount -l -f /tmp/img-backup-mnt/boot 2>/dev/null
+    fi
     if mountpoint -q /tmp/img-backup-mnt 2>/dev/null; then
         sudo umount -l -f /tmp/img-backup-mnt 2>/dev/null
     fi
@@ -193,7 +196,8 @@ retry_cmd() {
 
         log "WARN" "Backup operation failed with exit code $rc (Attempt $attempt/$max_attempts)."
         if [ $attempt -lt $max_attempts ]; then
-            log "WARN" "Retrying in ${delay} seconds after verifying network mount health..."
+            log "WARN" "Retrying in ${delay} seconds after cleaning up temporary mounts and verifying network mount health..."
+            cleanup 2>/dev/null
             sleep $delay
             check_and_fix_stale_mount "$TARGET_DIR"
             delay=$((delay * 2))
@@ -209,8 +213,8 @@ run_backup_step() {
     if [ ! -f "$MASTER_IMG" ]; then
         log "INFO" "No existing valid master image found. Creating a NEW full SD card image..."
         if [ -x "$BACKUP_UTIL" ]; then
-            log "INFO" "Invoking $BACKUP_UTIL for initial image creation..."
-            printf "${MASTER_IMG}\n\n\ny\n" | "$BACKUP_UTIL" 2>&1 | tee -a "$LOG_FILE"
+            log "INFO" "Invoking $BACKUP_UTIL for initial image creation (with 4000 MB incremental headroom)..."
+            printf "${MASTER_IMG}\n\n4000\ny\n" | "$BACKUP_UTIL" 2>&1 | tee -a "$LOG_FILE"
         else
             log "WARN" "$BACKUP_UTIL utility not found. Creating raw live system image fallback..."
             dd if=/dev/mmcblk0 of="$MASTER_IMG" bs=4M status=progress 2>&1 | tee -a "$LOG_FILE"

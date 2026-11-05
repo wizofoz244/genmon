@@ -6,7 +6,8 @@
 LOG_FILE="/home/genmonpi/backup.log"
 GENMON_DIR="/home/genmonpi/genmon"
 CONF_DIR="/etc/genmon"
-TARGET_DIR="/mnt/pibackup/daily"
+MOUNT_POINT="/mnt/pibackup"
+TARGET_DIR="${MOUNT_POINT}/daily"
 BACKUP_ARCHIVE="${TARGET_DIR}/genmon_daily_master.tar.gz"
 
 log() {
@@ -46,11 +47,11 @@ check_and_fix_stale_mount() {
 log "INFO" "=================================================="
 log "INFO" "Starting Daily Genmon Backup Procedure..."
 
-if ! check_and_fix_stale_mount "$TARGET_DIR"; then
+if ! check_and_fix_stale_mount "$MOUNT_POINT"; then
     exit 1
 fi
 
-mkdir -p "$TARGET_DIR" 2>/dev/null
+sudo mkdir -p "$TARGET_DIR" 2>/dev/null
 
 # Integrity check for tar.gz archive
 check_archive_integrity() {
@@ -93,7 +94,8 @@ retry_cmd() {
         if [ $attempt -lt $max_attempts ]; then
             log "WARN" "Retrying in ${delay} seconds after verifying network mount health..."
             sleep $delay
-            check_and_fix_stale_mount "$TARGET_DIR"
+            check_and_fix_stale_mount "$MOUNT_POINT"
+            sudo mkdir -p "$TARGET_DIR" 2>/dev/null
             delay=$((delay * 2))
         fi
         attempt=$((attempt + 1))
