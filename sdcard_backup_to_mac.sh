@@ -72,18 +72,18 @@ check_disk_space() {
 check_and_fix_stale_mount() {
     local target="$1"
 
-    # Test file write/stat access in target directory with sudo
-    if ! timeout 5 sudo touch "${target}/.mount_test" >/dev/null 2>&1; then
-        log "WARN" "Stale or unresponsive network mount detected at ${target} (No such device / Stale file handle)!"
+    # Allow up to 20 seconds for systemd CIFS automount to negotiate connection over Wi-Fi
+    if ! timeout 20 touch "${target}/.mount_test" >/dev/null 2>&1; then
+        log "WARN" "Stale or unresponsive network mount detected at ${target}!"
         log "WARN" "Attempting lazy unmount and automatic remount..."
 
         sudo umount -l -f "$target" >/dev/null 2>&1
         sleep 2
-        sudo mount "$target" >/dev/null 2>&1 || sudo mount -a >/dev/null 2>&1
+        sudo systemctl restart mnt-pibackup.automount >/dev/null 2>&1 || sudo mount "$target" >/dev/null 2>&1 || sudo mount -a >/dev/null 2>&1
         sleep 2
 
-        if timeout 5 sudo touch "${target}/.mount_test" >/dev/null 2>&1; then
-            sudo rm -f "${target}/.mount_test" >/dev/null 2>&1
+        if timeout 20 touch "${target}/.mount_test" >/dev/null 2>&1; then
+            rm -f "${target}/.mount_test" >/dev/null 2>&1
             log "INFO" "✓ Successfully recovered and remounted ${target}."
             return 0
         else
@@ -91,7 +91,7 @@ check_and_fix_stale_mount() {
             return 1
         fi
     else
-        sudo rm -f "${target}/.mount_test" >/dev/null 2>&1
+        rm -f "${target}/.mount_test" >/dev/null 2>&1
         return 0
     fi
 }
