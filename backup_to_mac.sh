@@ -7,6 +7,8 @@ LOG_FILE="/home/genmonpi/backup.log"
 GENMON_DIR="/home/genmonpi/genmon"
 CONF_DIR="/etc/genmon"
 TARGET_DIR="/mnt/pibackup"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FILTER_UTIL="${SCRIPT_DIR}/backup_progress_filter.py"
 
 log() {
     local level="${1:-INFO}"
@@ -117,7 +119,13 @@ log "INFO" "Creating staging backup archive ($STAGING_TAR)..."
 tar -czf "$STAGING_TAR" -C / "$CONF_DIR" "$GENMON_DIR/maintlog.json" "$GENMON_DIR/maint_sync_state.json" 2>> "$LOG_FILE"
 
 sync_daily_backup() {
-    cp "$STAGING_TAR" "$FINAL_ARCHIVE" 2>> "$LOG_FILE"
+    if [ -f "$FILTER_UTIL" ] && command -v rsync >/dev/null 2>&1; then
+        rsync --info=progress2 "$STAGING_TAR" "$FINAL_ARCHIVE" 2>&1 | python3 "$FILTER_UTIL" --log-file "$LOG_FILE" --interval 60 --pct-step 5
+        return ${PIPESTATUS[0]}
+    else
+        cp "$STAGING_TAR" "$FINAL_ARCHIVE" 2>> "$LOG_FILE"
+        return $?
+    fi
 }
 
 if check_archive_integrity "$STAGING_TAR"; then

@@ -7,6 +7,8 @@ LOG_FILE="/home/genmonpi/sdcard_backup.log"
 TARGET_DIR="/mnt/pibackup"
 MASTER_IMG="${TARGET_DIR}/genmon_sdcard_master.img"
 BACKUP_UTIL="/usr/local/bin/image-backup"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FILTER_UTIL="${SCRIPT_DIR}/backup_progress_filter.py"
 
 # Helper for formatted log messages: [YYYY-MM-DD HH:MM:SS] [LEVEL] Message
 log() {
@@ -220,23 +222,34 @@ retry_cmd() {
 
 # Execute Image Backup Routine
 run_backup_step() {
+    local filter_cmd=(cat)
+    if [ -f "$FILTER_UTIL" ] && command -v python3 >/dev/null 2>&1; then
+        filter_cmd=(python3 "$FILTER_UTIL" --log-file "$LOG_FILE" --interval 60 --pct-step 5)
+    else
+        filter_cmd=(tee -a "$LOG_FILE")
+    fi
+
     if [ ! -f "$MASTER_IMG" ]; then
         log "INFO" "No existing valid master image found. Creating a NEW full SD card image..."
         if [ -x "$BACKUP_UTIL" ]; then
             log "INFO" "Invoking $BACKUP_UTIL for initial image creation (with 4000 MB incremental headroom)..."
-            printf "${MASTER_IMG}\n\n4000\ny\n" | "$BACKUP_UTIL" 2>&1 | tee -a "$LOG_FILE"
+            printf "${MASTER_IMG}\n\n4000\ny\n" | "$BACKUP_UTIL" -o --info=progress2 2>&1 | "${filter_cmd[@]}"
+            return ${PIPESTATUS[1]}
         else
             log "WARN" "$BACKUP_UTIL utility not found. Creating raw live system image fallback..."
-            dd if=/dev/mmcblk0 of="$MASTER_IMG" bs=4M status=progress 2>&1 | tee -a "$LOG_FILE"
+            dd if=/dev/mmcblk0 of="$MASTER_IMG" bs=4M status=progress 2>&1 | "${filter_cmd[@]}"
+            return ${PIPESTATUS[0]}
         fi
     else
         log "INFO" "Performing incremental live backup update to master image..."
         if [ -x "$BACKUP_UTIL" ]; then
             log "INFO" "Invoking $BACKUP_UTIL for incremental update..."
-            printf "\n\n\ny\n" | "$BACKUP_UTIL" "$MASTER_IMG" 2>&1 | tee -a "$LOG_FILE"
+            printf "\n\n\ny\n" | "$BACKUP_UTIL" -o --info=progress2 "$MASTER_IMG" 2>&1 | "${filter_cmd[@]}"
+            return ${PIPESTATUS[1]}
         else
             log "INFO" "Updating backup image via rsync..."
-            rsync -aHAX --timeout=60 --contimeout=30 --delete / "$MASTER_IMG" 2>&1 | tee -a "$LOG_FILE"
+            rsync -aHAX --info=progress2 --timeout=60 --contimeout=30 --delete / "$MASTER_IMG" 2>&1 | "${filter_cmd[@]}"
+            return ${PIPESTATUS[0]}
         fi
     fi
 }
