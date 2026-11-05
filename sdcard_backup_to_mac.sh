@@ -129,8 +129,28 @@ if ! check_and_fix_stale_mount "$TARGET_DIR"; then
     exit 1
 fi
 
+# Ensure image-backup and mkfs do not attempt DISCARD on CIFS/SMB loop devices
+configure_mkfs_nodiscard() {
+    # 1. Update /etc/mke2fs.conf to disable discard by default on ext4 format
+    if [ -w /etc/mke2fs.conf ] && ! grep -q "discard = false" /etc/mke2fs.conf 2>/dev/null; then
+        if grep -q "\[defaults\]" /etc/mke2fs.conf 2>/dev/null; then
+            sed -i '/\[defaults\]/a \\tdiscard = false' /etc/mke2fs.conf 2>/dev/null && \
+                log "INFO" "Configured /etc/mke2fs.conf (discard = false) for network share compatibility."
+        fi
+    fi
+
+    # 2. Patch image-backup utility to pass -E nodiscard to mkfs.ext4
+    if [ -f "$BACKUP_UTIL" ] && [ -w "$BACKUP_UTIL" ]; then
+        if grep -q "mkfs\.ext4" "$BACKUP_UTIL" && ! grep -q "nodiscard" "$BACKUP_UTIL"; then
+            sed -i 's/mkfs\.ext4/mkfs.ext4 -E nodiscard/g' "$BACKUP_UTIL" 2>/dev/null && \
+                log "INFO" "Patched $BACKUP_UTIL with '-E nodiscard' for CIFS/SMB compatibility."
+        fi
+    fi
+}
+
 check_dependencies
 check_disk_space "$TARGET_DIR"
+configure_mkfs_nodiscard
 
 # Function to test file integrity of master image (partition table + ext4 filesystem health)
 check_image_integrity() {
@@ -246,11 +266,21 @@ run_backup_step() {
         if [ -x "$BACKUP_UTIL" ]; then
             log "INFO" "Invoking $BACKUP_UTIL for initial image creation (with 4000 MB incremental headroom)..."
             printf "${MASTER_IMG}\n\n4000\ny\n" | "$BACKUP_UTIL" -o --info=progress2 2>&1 | "${filter_cmd[@]}"
-            return ${PIPESTATUS[1]}
+            local step_rc=${PIPESTATUS[1]}
+            if [ $step_rc -ne 0 ]; then
+                log "WARN" "Initial image creation failed. Cleaning up incomplete master image file..."
+                rm -f "$MASTER_IMG" 2>/dev/null
+            fi
+            return $step_rc
         else
             log "WARN" "$BACKUP_UTIL utility not found. Creating raw live system image fallback..."
             dd if=/dev/mmcblk0 of="$MASTER_IMG" bs=4M status=progress 2>&1 | "${filter_cmd[@]}"
-            return ${PIPESTATUS[0]}
+            local step_rc=${PIPESTATUS[0]}
+            if [ $step_rc -ne 0 ]; then
+                log "WARN" "Raw image creation failed. Cleaning up incomplete master image file..."
+                rm -f "$MASTER_IMG" 2>/dev/null
+            fi
+            return $step_rc
         fi
     else
         log "INFO" "Performing incremental live backup update to master image..."
