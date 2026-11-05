@@ -39,11 +39,14 @@ trap cleanup EXIT INT TERM
 # Check for required system packages
 check_dependencies() {
     local missing=()
-    for pkg in kpartx rsync parted bc dosfstools e2fsck; do
-        if ! command -v "$pkg" >/dev/null 2>&1; then
-            missing+=("$pkg")
+    for cmd in kpartx rsync parted bc e2fsck; do
+        if ! command -v "$cmd" >/dev/null 2>&1 && [ ! -x "/sbin/$cmd" ] && [ ! -x "/usr/sbin/$cmd" ]; then
+            missing+=("$cmd")
         fi
     done
+    if ! command -v fsck.fat >/dev/null 2>&1 && ! command -v dosfsck >/dev/null 2>&1 && [ ! -x /sbin/fsck.fat ] && [ ! -x /sbin/dosfsck ] && [ ! -x /usr/sbin/fsck.fat ] && [ ! -x /usr/sbin/dosfsck ]; then
+        missing+=("dosfstools")
+    fi
 
     if [ ${#missing[@]} -ne 0 ]; then
         log "WARN" "Missing recommended backup utilities: ${missing[*]}"
