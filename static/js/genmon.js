@@ -5101,7 +5101,11 @@ var Pages = {
 
       $('#sl-ack').on('click', function() {
         var tabKey = self._activeTab;
-        API.get('ack_script_log?log=' + tabKey).done(function() {
+        API.get('ack_script_log?log=' + tabKey).done(function(res) {
+          if (res && res.result === 'Error') {
+            Modal.alert('Acknowledgment Error', res.message || 'Failed to acknowledge errors on server.');
+            return;
+          }
           self._load();
         }).fail(function() {
           Modal.alert('Error', 'Failed to acknowledge errors on server.');
