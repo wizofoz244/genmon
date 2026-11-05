@@ -3,6 +3,8 @@
 # Daily Genmon Configuration & Log Backup Script with Integrity Pre-Check
 # -------------------------------------------------------------------------------
 
+umask 022
+
 LOG_FILE="/home/genmonpi/backup.log"
 GENMON_DIR="/home/genmonpi/genmon"
 CONF_DIR="/etc/genmon"
@@ -128,21 +130,27 @@ FINAL_ARCHIVE="${TARGET_DIR}/genmon_daily_${BACKUP_DATE}.tar.gz"
 log "INFO" "Creating staging backup archive ($STAGING_TAR)..."
 
 tar -czf "$STAGING_TAR" -C / "$CONF_DIR" "$GENMON_DIR/maintlog.json" "$GENMON_DIR/maint_sync_state.json" 2>> "$LOG_FILE"
+chmod 755 "$STAGING_TAR" 2>/dev/null || true
 
 sync_daily_backup() {
+    local rc=0
     if [ -f "$FILTER_UTIL" ] && command -v rsync >/dev/null 2>&1; then
-        rsync --info=progress2 "$STAGING_TAR" "$FINAL_ARCHIVE" 2>&1 | python3 "$FILTER_UTIL" --log-file "$LOG_FILE" --interval 60 --pct-step 5
-        return ${PIPESTATUS[0]}
+        rsync --chmod=755 --info=progress2 "$STAGING_TAR" "$FINAL_ARCHIVE" 2>&1 | python3 "$FILTER_UTIL" --log-file "$LOG_FILE" --interval 60 --pct-step 5
+        rc=${PIPESTATUS[0]}
     else
         cp "$STAGING_TAR" "$FINAL_ARCHIVE" 2>> "$LOG_FILE"
-        return $?
+        rc=$?
     fi
+    chmod 755 "$FINAL_ARCHIVE" 2>/dev/null || true
+    chmod 755 "$LOG_FILE" 2>/dev/null || true
+    return $rc
 }
 
 if check_archive_integrity "$STAGING_TAR"; then
     log "INFO" "Staging archive integrity verified. Syncing to backup target..."
     if retry_cmd sync_daily_backup; then
         rm -f "$STAGING_TAR"
+        chmod 755 "$FINAL_ARCHIVE" 2>/dev/null || true
         log "INFO" "✓ Daily Genmon Backup completed successfully ($FINAL_ARCHIVE)."
     else
         log "ERROR" "Failed to sync daily backup archive to $FINAL_ARCHIVE!"
@@ -158,6 +166,7 @@ fi
 # Retain 7 daily snapshots (one per day of the week, deleting older ones)
 log "INFO" "Applying retention policy: retaining the 7 most recent daily archives..."
 ls -t "${TARGET_DIR}"/genmon_daily_*.tar.gz 2>/dev/null | tail -n +8 | xargs -r rm -f
+chmod 755 "${TARGET_DIR}"/genmon_daily_*.tar.gz 2>/dev/null || true
 
 # Clean up legacy master archive if present from earlier script versions
 rm -f "${TARGET_DIR}/genmon_daily_master.tar.gz" 2>/dev/null

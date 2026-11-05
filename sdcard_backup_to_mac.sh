@@ -3,6 +3,8 @@
 # Weekly Live SD Card Image Backup Script with Corruption Protection & Auto-Healing
 # -------------------------------------------------------------------------------
 
+umask 022
+
 LOG_FILE="/home/genmonpi/sdcard_backup.log"
 TARGET_DIR="/mnt/pibackup"
 MASTER_IMG="${TARGET_DIR}/genmon_sdcard_master.img"
@@ -270,7 +272,10 @@ run_backup_step() {
             if [ $step_rc -ne 0 ]; then
                 log "WARN" "Initial image creation failed. Cleaning up incomplete master image file..."
                 rm -f "$MASTER_IMG" 2>/dev/null
+            else
+                chmod 755 "$MASTER_IMG" 2>/dev/null || true
             fi
+            chmod 755 "$LOG_FILE" 2>/dev/null || true
             return $step_rc
         else
             log "WARN" "$BACKUP_UTIL utility not found. Creating raw live system image fallback..."
@@ -279,7 +284,10 @@ run_backup_step() {
             if [ $step_rc -ne 0 ]; then
                 log "WARN" "Raw image creation failed. Cleaning up incomplete master image file..."
                 rm -f "$MASTER_IMG" 2>/dev/null
+            else
+                chmod 755 "$MASTER_IMG" 2>/dev/null || true
             fi
+            chmod 755 "$LOG_FILE" 2>/dev/null || true
             return $step_rc
         fi
     else
@@ -287,11 +295,17 @@ run_backup_step() {
         if [ -x "$BACKUP_UTIL" ]; then
             log "INFO" "Invoking $BACKUP_UTIL for incremental update..."
             printf "\n\n\ny\n" | "$BACKUP_UTIL" -o --info=progress2 "$MASTER_IMG" 2>&1 | "${filter_cmd[@]}"
-            return ${PIPESTATUS[1]}
+            local step_rc=${PIPESTATUS[1]}
+            chmod 755 "$MASTER_IMG" 2>/dev/null || true
+            chmod 755 "$LOG_FILE" 2>/dev/null || true
+            return $step_rc
         else
             log "INFO" "Updating backup image via rsync..."
             rsync -aHAX --info=progress2 --timeout=60 --contimeout=30 --delete / "$MASTER_IMG" 2>&1 | "${filter_cmd[@]}"
-            return ${PIPESTATUS[0]}
+            local step_rc=${PIPESTATUS[0]}
+            chmod 755 "$MASTER_IMG" 2>/dev/null || true
+            chmod 755 "$LOG_FILE" 2>/dev/null || true
+            return $step_rc
         fi
     fi
 }
@@ -313,6 +327,8 @@ fi
 # Post-Backup Integrity Audit
 log "INFO" "Validating completed backup image integrity..."
 if check_image_integrity "$MASTER_IMG"; then
+    chmod 755 "$MASTER_IMG" 2>/dev/null || true
+    chmod 755 "$LOG_FILE" 2>/dev/null || true
     log "INFO" "✓ Integrity Check Passed: SD Card Backup completed successfully ($MASTER_IMG)."
 else
     log "ERROR" "Backup completed but output image failed post-execution integrity check!"
