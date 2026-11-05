@@ -240,8 +240,9 @@ run_backup_step() {
         filter_cmd=(tee -a "$LOG_FILE")
     fi
 
-    if [ ! -f "$MASTER_IMG" ]; then
-        log "INFO" "No existing valid master image found. Creating a NEW full SD card image..."
+    if [ ! -f "$MASTER_IMG" ] || ! check_image_integrity "$MASTER_IMG"; then
+        log "INFO" "No existing valid master image found (or existing image is invalid). Creating a NEW full SD card image..."
+        rm -f "$MASTER_IMG" 2>/dev/null
         if [ -x "$BACKUP_UTIL" ]; then
             log "INFO" "Invoking $BACKUP_UTIL for initial image creation (with 4000 MB incremental headroom)..."
             printf "${MASTER_IMG}\n\n4000\ny\n" | "$BACKUP_UTIL" -o --info=progress2 2>&1 | "${filter_cmd[@]}"
