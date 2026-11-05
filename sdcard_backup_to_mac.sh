@@ -99,11 +99,22 @@ check_and_fix_stale_mount() {
     fi
 }
 
+# Helper to detect if another backup script is running (excluding self and parent)
+is_other_running() {
+    local pattern="$1"
+    for pid in $(pgrep -f "$pattern" 2>/dev/null); do
+        if [ "$pid" != "$$" ] && [ "$pid" != "$PPID" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 log "INFO" "=================================================="
 log "INFO" "Starting Weekly SD Card Live Image Backup Procedure..."
 
 # Mutual Exclusion: Ensure daily backup is not running concurrently
-if pgrep -f "backup_to_mac.sh" >/dev/null 2>&1; then
+if is_other_running "(^|[/ ])backup_to_mac\.sh"; then
     log "WARN" "Daily Genmon Backup is currently in progress. Skipping weekly backup to prevent I/O conflict."
     exit 0
 fi
