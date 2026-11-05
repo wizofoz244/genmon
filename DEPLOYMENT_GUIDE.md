@@ -135,7 +135,7 @@ Permissions: `sudo chmod 600 /etc/smbcredentials`
 - **Image Utility**: Utilizes `image-backup` to create direct, compressed, shrink-fit `.img` files.
 - **Integrity Validation**: Runs loopback `e2fsck -fy` filesystem superblock check on newly created images to guarantee restoration integrity.
 - **Auto-Replacement**: If a backup is corrupted, automatically creates a fresh replacement image.
-- **Retention**: Maintains current backup plus previous generation fallback.
+- **Master Image**: Directly updates `/mnt/pibackup/genmon_sdcard_master.img` in place via `rsync` with 4 GB growth headroom, avoiding redundant, network-saturating file copies.
 
 ---
 

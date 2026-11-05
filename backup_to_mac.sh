@@ -18,33 +18,40 @@ log() {
 # Check for stale network mount and attempt auto-remount recovery
 check_and_fix_stale_mount() {
     local target="$1"
+    local test_file="${target}/.mount_test_$$"
 
-    # Allow up to 20 seconds for systemd CIFS automount to negotiate connection over Wi-Fi
-    if ! timeout 20 touch "${target}/.mount_test" >/dev/null 2>&1; then
-        log "WARN" "Stale or unresponsive network mount detected at ${target}!"
-        log "WARN" "Attempting lazy unmount and automatic remount..."
-
-        sudo umount -l -f "$target" >/dev/null 2>&1
-        sleep 2
-        sudo systemctl restart mnt-pibackup.automount >/dev/null 2>&1 || sudo mount "$target" >/dev/null 2>&1 || sudo mount -a >/dev/null 2>&1
-        sleep 2
-
-        if timeout 20 touch "${target}/.mount_test" >/dev/null 2>&1; then
-            rm -f "${target}/.mount_test" >/dev/null 2>&1
-            log "INFO" "✓ Successfully recovered and remounted ${target}."
-            return 0
-        else
-            log "ERROR" "Failed to recover network mount ${target}. Host or network share is unreachable!"
-            return 1
-        fi
-    else
-        rm -f "${target}/.mount_test" >/dev/null 2>&1
+    # Lightweight stat check first to avoid blocking on write queues
+    if timeout 15 stat "$target" >/dev/null 2>&1 && timeout 15 touch "$test_file" >/dev/null 2>&1; then
+        rm -f "$test_file" >/dev/null 2>&1
         return 0
+    fi
+
+    log "WARN" "Network mount at ${target} is unresponsive or stale!"
+    log "WARN" "Attempting recovery via systemd automount..."
+
+    sudo umount -l -f "$target" >/dev/null 2>&1
+    sleep 2
+    sudo systemctl restart mnt-pibackup.automount >/dev/null 2>&1 || sudo mount "$target" >/dev/null 2>&1 || sudo mount -a >/dev/null 2>&1
+    sleep 2
+
+    if timeout 20 stat "$target" >/dev/null 2>&1 && timeout 20 touch "$test_file" >/dev/null 2>&1; then
+        rm -f "$test_file" >/dev/null 2>&1
+        log "INFO" "✓ Successfully recovered and remounted ${target}."
+        return 0
+    else
+        log "ERROR" "Failed to recover network mount ${target}. Host or network share is unreachable!"
+        return 1
     fi
 }
 
 log "INFO" "=================================================="
 log "INFO" "Starting Daily Genmon Backup Procedure..."
+
+# Mutual Exclusion: Ensure weekly SD card backup is not running concurrently
+if pgrep -f "sdcard_backup_to_mac.sh" >/dev/null 2>&1; then
+    log "WARN" "Weekly SD Card Backup is currently in progress. Skipping daily backup to prevent I/O conflict."
+    exit 0
+fi
 
 if ! check_and_fix_stale_mount "$TARGET_DIR"; then
     exit 1
