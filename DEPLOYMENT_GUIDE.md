@@ -123,8 +123,9 @@ Permissions: `sudo chmod 600 /etc/smbcredentials`
 
 ### Daily Genmon Backup Script (`/home/genmonpi/genmon/backup_to_mac.sh`)
 - **Execution**: Daily at 4:00 AM via Cron.
-- **Archive Contents**: `/etc/genmon/*`, `/home/genmonpi/genmon/conf/*`, `maintlog.json`, `outage.txt`.
-- **Retention**: Keeps the last 14 daily archives, purging older archives automatically.
+- **Archive Contents**: `/etc/genmon/*`, `maintlog.json`, `maint_sync_state.json`.
+- **Target Location**: `/mnt/pibackup/genmon_daily_YYYY-MM-DD_HHMMSS.tar.gz`
+- **Retention**: Retains the 7 most recent daily archives (1 per day of the week), automatically purging older archives.
 - **Network Resilience**: 3-stage exponential backoff retry loop with automatic stale mount unmount/remount recovery.
 
 ---
