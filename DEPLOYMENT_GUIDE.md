@@ -101,10 +101,15 @@ sudo python3 /home/genmonpi/genmon/addon/genmaint_sync.py -c /etc/genmon [option
 
 ### CIFS Mount Configuration (`/etc/fstab`)
 ```text
-//192.168.128.15/pibackup /mnt/pibackup cifs credentials=/etc/smbcredentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0,nofail,_netdev,x-systemd.automount,x-systemd.mount-timeout=30 0 0
+//192.168.128.15/PiBackup /mnt/pibackup cifs credentials=/etc/smbcredentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0,nobrl,hard,nofail,_netdev,x-systemd.automount,x-systemd.mount-timeout=30 0 0
 ```
 - **Automount**: `x-systemd.automount` ensures mount is only triggered on demand.
 - **Timeout**: `x-systemd.mount-timeout=30` prevents boot stalls if Mac is offline.
+- **Locking & Resilience**: `nobrl,hard` prevents byte-range locking conflicts and connection drop errors when loop-mounting image files directly over CIFS.
+- **Required Utilities**: Ensure `dosfstools`, `kpartx`, `rsync`, `parted`, and `bc` are installed:
+  ```bash
+  sudo apt-get update && sudo apt-get install -y dosfstools kpartx rsync parted bc
+  ```
 
 ### Credentials File (`/etc/smbcredentials`)
 ```ini
@@ -118,8 +123,9 @@ Permissions: `sudo chmod 600 /etc/smbcredentials`
 
 ### Daily Genmon Backup Script (`/home/genmonpi/genmon/backup_to_mac.sh`)
 - **Execution**: Daily at 4:00 AM via Cron.
-- **Archive Contents**: `/etc/genmon/*`, `/home/genmonpi/genmon/conf/*`, `maintlog.json`, `outage.txt`.
-- **Retention**: Keeps the last 14 daily archives, purging older archives automatically.
+- **Archive Contents**: `/etc/genmon/*`, `maintlog.json`, `maint_sync_state.json`.
+- **Target Location**: `/mnt/pibackup/genmon_daily_YYYY-MM-DD_HHMMSS.tar.gz`
+- **Retention**: Retains the 7 most recent daily archives (1 per day of the week), automatically purging older archives.
 - **Network Resilience**: 3-stage exponential backoff retry loop with automatic stale mount unmount/remount recovery.
 
 ---
@@ -129,7 +135,7 @@ Permissions: `sudo chmod 600 /etc/smbcredentials`
 - **Image Utility**: Utilizes `image-backup` to create direct, compressed, shrink-fit `.img` files.
 - **Integrity Validation**: Runs loopback `e2fsck -fy` filesystem superblock check on newly created images to guarantee restoration integrity.
 - **Auto-Replacement**: If a backup is corrupted, automatically creates a fresh replacement image.
-- **Retention**: Maintains current backup plus previous generation fallback.
+- **Master Image**: Directly updates `/mnt/pibackup/genmon_sdcard_master.img` in place via `rsync` with 4 GB growth headroom, avoiding redundant, network-saturating file copies.
 
 ---
 

@@ -1,6 +1,15 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Oz Custom Addons v1.5.4 - 2026-11-06
+- **CIFS Network Backup & SD Card Image Auto-Recovery**:
+  - **CIFS Loop Device Safety**: Added automatic `discard = false` configuration in `/etc/mke2fs.conf` and patched `image-backup` to pass `-E nodiscard` to `mkfs.ext4`, completely eliminating SMB/CIFS loopback `EOPNOTSUPP` I/O crashes during image formatting.
+  - **Standardized Permissions (755)**: Enforced `umask 022` and explicit `chmod 755` permissions across all created daily `.tar.gz` archives, weekly master `.img` images, and log files.
+  - **Mutual Exclusion & Stale Mount Resilience**: Added regex-anchored mutual exclusion between daily and weekly routines to prevent concurrent I/O conflicts; decoupled mount check from subfolders and added `stat`-based non-blocking health checks with systemd automount recovery.
+  - **Real-Time Stream Progress Filter (`backup_progress_filter.py`)**: Built unbuffered stream processor logging progress at clean 5% increments with 60-second heartbeats for slow network operations.
+  - **Server-Side Log Acknowledgment Hardening**: Added `for_write=True` writable path detection in `genserv.py` (`get_script_log_acks_path`) to gracefully handle permission restrictions on `/etc/genmon/script_log_acks.json`, and added UI alert feedback in `genmon.js`.
+
+
 ## Oz Custom Addons v1.5.3 - 2026-09-01
 - **Suppress Spurious Utility Outage Notifications on Restart (#49)**:
   - Guarded initial baseline state in `genmonlib/mynotify.py`: when `self.LastOutageStatus` is `None` and `OutageState` is `False` (normal utility power on boot), initializes baseline `LastOutageStatus = False` without invoking `ProcessEventData("OUTAGE", False, None)`, eliminating spurious "Utility Power RESTORED" notifications upon daemon restart.

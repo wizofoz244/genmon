@@ -964,12 +964,25 @@ _SCRIPT_LOG_ACKS_PATHS = [
 ]
 
 
-def get_script_log_acks_path() -> str:
+def get_script_log_acks_path(for_write: bool = False) -> str:
     """Resolve the storage path for the script log acknowledgments file.
+
+    Args:
+        for_write: If True, prioritize writable paths.
 
     Returns:
         Absolute or relative path string to script_log_acks.json.
     """
+    if for_write:
+        for p in _SCRIPT_LOG_ACKS_PATHS:
+            if os.path.exists(p) and os.access(p, os.W_OK):
+                return p
+        if os.path.isdir("/etc/genmon") and os.access("/etc/genmon", os.W_OK):
+            return "/etc/genmon/script_log_acks.json"
+        if os.path.isdir("./data") and os.access("./data", os.W_OK):
+            return "./data/script_log_acks.json"
+        return "./script_log_acks.json"
+
     for p in _SCRIPT_LOG_ACKS_PATHS:
         if os.path.exists(p):
             return p
@@ -1038,7 +1051,7 @@ def save_script_log_ack(log_type: str, epoch_ts: Optional[float] = None) -> Tupl
     targets = valid_types if log_type == "all" else [log_type]
 
     with _script_log_acks_lock:
-        path = get_script_log_acks_path()
+        path = get_script_log_acks_path(for_write=True)
         current: Dict[str, Any] = {}
         if os.path.exists(path):
             try:

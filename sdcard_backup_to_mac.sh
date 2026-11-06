@@ -3,10 +3,14 @@
 # Weekly Live SD Card Image Backup Script with Corruption Protection & Auto-Healing
 # -------------------------------------------------------------------------------
 
+umask 022
+
 LOG_FILE="/home/genmonpi/sdcard_backup.log"
 TARGET_DIR="/mnt/pibackup"
 MASTER_IMG="${TARGET_DIR}/genmon_sdcard_master.img"
 BACKUP_UTIL="/usr/local/bin/image-backup"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FILTER_UTIL="${SCRIPT_DIR}/backup_progress_filter.py"
 
 # Helper for formatted log messages: [YYYY-MM-DD HH:MM:SS] [LEVEL] Message
 log() {
@@ -19,7 +23,10 @@ log() {
 # Emergency Signal Trap & Resource Cleanup
 cleanup() {
     local rc=$?
-    # Unmount temporary image backup mount points if left behind
+    # Unmount temporary image backup mount points if left behind (boot first, then root)
+    if mountpoint -q /tmp/img-backup-mnt/boot 2>/dev/null; then
+        sudo umount -l -f /tmp/img-backup-mnt/boot 2>/dev/null
+    fi
     if mountpoint -q /tmp/img-backup-mnt 2>/dev/null; then
         sudo umount -l -f /tmp/img-backup-mnt 2>/dev/null
     fi
@@ -36,11 +43,14 @@ trap cleanup EXIT INT TERM
 # Check for required system packages
 check_dependencies() {
     local missing=()
-    for pkg in kpartx rsync parted bc dosfstools e2fsck; do
-        if ! command -v "$pkg" >/dev/null 2>&1; then
-            missing+=("$pkg")
+    for cmd in kpartx rsync parted bc e2fsck; do
+        if ! command -v "$cmd" >/dev/null 2>&1 && [ ! -x "/sbin/$cmd" ] && [ ! -x "/usr/sbin/$cmd" ]; then
+            missing+=("$cmd")
         fi
     done
+    if ! command -v fsck.fat >/dev/null 2>&1 && ! command -v dosfsck >/dev/null 2>&1 && [ ! -x /sbin/fsck.fat ] && [ ! -x /sbin/dosfsck ] && [ ! -x /usr/sbin/fsck.fat ] && [ ! -x /usr/sbin/dosfsck ]; then
+        missing+=("dosfstools")
+    fi
 
     if [ ${#missing[@]} -ne 0 ]; then
         log "WARN" "Missing recommended backup utilities: ${missing[*]}"
@@ -65,33 +75,51 @@ check_disk_space() {
 # Check for stale network mount and attempt auto-remount recovery
 check_and_fix_stale_mount() {
     local target="$1"
+    local test_file="${target}/.mount_test_$$"
 
-    # Test file write/stat access in target directory with sudo
-    if ! timeout 5 sudo touch "${target}/.mount_test" >/dev/null 2>&1; then
-        log "WARN" "Stale or unresponsive network mount detected at ${target} (No such device / Stale file handle)!"
-        log "WARN" "Attempting lazy unmount and automatic remount..."
-
-        sudo umount -l -f "$target" >/dev/null 2>&1
-        sleep 2
-        sudo mount "$target" >/dev/null 2>&1 || sudo mount -a >/dev/null 2>&1
-        sleep 2
-
-        if timeout 5 sudo touch "${target}/.mount_test" >/dev/null 2>&1; then
-            sudo rm -f "${target}/.mount_test" >/dev/null 2>&1
-            log "INFO" "✓ Successfully recovered and remounted ${target}."
-            return 0
-        else
-            log "ERROR" "Failed to recover network mount ${target}. Host or network share is unreachable!"
-            return 1
-        fi
-    else
-        sudo rm -f "${target}/.mount_test" >/dev/null 2>&1
+    # Lightweight stat check first to avoid blocking on write queues
+    if timeout 15 stat "$target" >/dev/null 2>&1 && timeout 15 touch "$test_file" >/dev/null 2>&1; then
+        rm -f "$test_file" >/dev/null 2>&1
         return 0
     fi
+
+    log "WARN" "Network mount at ${target} is unresponsive or stale!"
+    log "WARN" "Attempting recovery via systemd automount..."
+
+    sudo umount -l -f "$target" >/dev/null 2>&1
+    sleep 2
+    sudo systemctl restart mnt-pibackup.automount >/dev/null 2>&1 || sudo mount "$target" >/dev/null 2>&1 || sudo mount -a >/dev/null 2>&1
+    sleep 2
+
+    if timeout 20 stat "$target" >/dev/null 2>&1 && timeout 20 touch "$test_file" >/dev/null 2>&1; then
+        rm -f "$test_file" >/dev/null 2>&1
+        log "INFO" "✓ Successfully recovered and remounted ${target}."
+        return 0
+    else
+        log "ERROR" "Failed to recover network mount ${target}. Host or network share is unreachable!"
+        return 1
+    fi
+}
+
+# Helper to detect if another backup script is running (excluding self and parent)
+is_other_running() {
+    local pattern="$1"
+    for pid in $(pgrep -f "$pattern" 2>/dev/null); do
+        if [ "$pid" != "$$" ] && [ "$pid" != "$PPID" ]; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 log "INFO" "=================================================="
 log "INFO" "Starting Weekly SD Card Live Image Backup Procedure..."
+
+# Mutual Exclusion: Ensure daily backup is not running concurrently
+if is_other_running "(^|[/ ])backup_to_mac\.sh"; then
+    log "WARN" "Daily Genmon Backup is currently in progress. Skipping weekly backup to prevent I/O conflict."
+    exit 0
+fi
 
 # Ensure target mount directory exists and is healthy
 if [ ! -d "$TARGET_DIR" ]; then
@@ -103,8 +131,28 @@ if ! check_and_fix_stale_mount "$TARGET_DIR"; then
     exit 1
 fi
 
+# Ensure image-backup and mkfs do not attempt DISCARD on CIFS/SMB loop devices
+configure_mkfs_nodiscard() {
+    # 1. Update /etc/mke2fs.conf to disable discard by default on ext4 format
+    if [ -w /etc/mke2fs.conf ] && ! grep -q "discard = false" /etc/mke2fs.conf 2>/dev/null; then
+        if grep -q "\[defaults\]" /etc/mke2fs.conf 2>/dev/null; then
+            sed -i '/\[defaults\]/a \\tdiscard = false' /etc/mke2fs.conf 2>/dev/null && \
+                log "INFO" "Configured /etc/mke2fs.conf (discard = false) for network share compatibility."
+        fi
+    fi
+
+    # 2. Patch image-backup utility to pass -E nodiscard to mkfs.ext4
+    if [ -f "$BACKUP_UTIL" ] && [ -w "$BACKUP_UTIL" ]; then
+        if grep -q "mkfs\.ext4" "$BACKUP_UTIL" && ! grep -q "nodiscard" "$BACKUP_UTIL"; then
+            sed -i 's/mkfs\.ext4/mkfs.ext4 -E nodiscard/g' "$BACKUP_UTIL" 2>/dev/null && \
+                log "INFO" "Patched $BACKUP_UTIL with '-E nodiscard' for CIFS/SMB compatibility."
+        fi
+    fi
+}
+
 check_dependencies
 check_disk_space "$TARGET_DIR"
+configure_mkfs_nodiscard
 
 # Function to test file integrity of master image (partition table + ext4 filesystem health)
 check_image_integrity() {
@@ -193,7 +241,8 @@ retry_cmd() {
 
         log "WARN" "Backup operation failed with exit code $rc (Attempt $attempt/$max_attempts)."
         if [ $attempt -lt $max_attempts ]; then
-            log "WARN" "Retrying in ${delay} seconds after verifying network mount health..."
+            log "WARN" "Retrying in ${delay} seconds after cleaning up temporary mounts and verifying network mount health..."
+            cleanup 2>/dev/null
             sleep $delay
             check_and_fix_stale_mount "$TARGET_DIR"
             delay=$((delay * 2))
@@ -206,23 +255,57 @@ retry_cmd() {
 
 # Execute Image Backup Routine
 run_backup_step() {
-    if [ ! -f "$MASTER_IMG" ]; then
-        log "INFO" "No existing valid master image found. Creating a NEW full SD card image..."
+    local filter_cmd=(cat)
+    if [ -f "$FILTER_UTIL" ] && command -v python3 >/dev/null 2>&1; then
+        filter_cmd=(python3 "$FILTER_UTIL" --log-file "$LOG_FILE" --interval 60 --pct-step 5)
+    else
+        filter_cmd=(tee -a "$LOG_FILE")
+    fi
+
+    if [ ! -f "$MASTER_IMG" ] || ! check_image_integrity "$MASTER_IMG"; then
+        log "INFO" "No existing valid master image found (or existing image is invalid). Creating a NEW full SD card image..."
+        rm -f "$MASTER_IMG" 2>/dev/null
         if [ -x "$BACKUP_UTIL" ]; then
-            log "INFO" "Invoking $BACKUP_UTIL for initial image creation..."
-            printf "${MASTER_IMG}\n\n\ny\n" | "$BACKUP_UTIL" 2>&1 | tee -a "$LOG_FILE"
+            log "INFO" "Invoking $BACKUP_UTIL for initial image creation (with 4000 MB incremental headroom)..."
+            printf "${MASTER_IMG}\n\n4000\ny\n" | "$BACKUP_UTIL" -o --info=progress2 2>&1 | "${filter_cmd[@]}"
+            local step_rc=${PIPESTATUS[1]}
+            if [ $step_rc -ne 0 ]; then
+                log "WARN" "Initial image creation failed. Cleaning up incomplete master image file..."
+                rm -f "$MASTER_IMG" 2>/dev/null
+            else
+                chmod 755 "$MASTER_IMG" 2>/dev/null || true
+            fi
+            chmod 755 "$LOG_FILE" 2>/dev/null || true
+            return $step_rc
         else
             log "WARN" "$BACKUP_UTIL utility not found. Creating raw live system image fallback..."
-            dd if=/dev/mmcblk0 of="$MASTER_IMG" bs=4M status=progress 2>&1 | tee -a "$LOG_FILE"
+            dd if=/dev/mmcblk0 of="$MASTER_IMG" bs=4M status=progress 2>&1 | "${filter_cmd[@]}"
+            local step_rc=${PIPESTATUS[0]}
+            if [ $step_rc -ne 0 ]; then
+                log "WARN" "Raw image creation failed. Cleaning up incomplete master image file..."
+                rm -f "$MASTER_IMG" 2>/dev/null
+            else
+                chmod 755 "$MASTER_IMG" 2>/dev/null || true
+            fi
+            chmod 755 "$LOG_FILE" 2>/dev/null || true
+            return $step_rc
         fi
     else
         log "INFO" "Performing incremental live backup update to master image..."
         if [ -x "$BACKUP_UTIL" ]; then
             log "INFO" "Invoking $BACKUP_UTIL for incremental update..."
-            printf "\n\n\ny\n" | "$BACKUP_UTIL" "$MASTER_IMG" 2>&1 | tee -a "$LOG_FILE"
+            printf "\n\n\ny\n" | "$BACKUP_UTIL" -o --info=progress2 "$MASTER_IMG" 2>&1 | "${filter_cmd[@]}"
+            local step_rc=${PIPESTATUS[1]}
+            chmod 755 "$MASTER_IMG" 2>/dev/null || true
+            chmod 755 "$LOG_FILE" 2>/dev/null || true
+            return $step_rc
         else
             log "INFO" "Updating backup image via rsync..."
-            rsync -aHAX --timeout=60 --contimeout=30 --delete / "$MASTER_IMG" 2>&1 | tee -a "$LOG_FILE"
+            rsync -aHAX --info=progress2 --timeout=60 --contimeout=30 --delete / "$MASTER_IMG" 2>&1 | "${filter_cmd[@]}"
+            local step_rc=${PIPESTATUS[0]}
+            chmod 755 "$MASTER_IMG" 2>/dev/null || true
+            chmod 755 "$LOG_FILE" 2>/dev/null || true
+            return $step_rc
         fi
     fi
 }
@@ -244,10 +327,9 @@ fi
 # Post-Backup Integrity Audit
 log "INFO" "Validating completed backup image integrity..."
 if check_image_integrity "$MASTER_IMG"; then
-    log "INFO" "✓ Integrity Check Passed: SD Card Backup completed successfully."
-    SNAPSHOT_NAME="${TARGET_DIR}/genmon_sdcard_$(date '+%Y-%m-%d_%H%M%S').img"
-    cp "$MASTER_IMG" "$SNAPSHOT_NAME" 2>/dev/null && log "INFO" "Snapshot created: $SNAPSHOT_NAME"
-    ls -t "${TARGET_DIR}"/genmon_sdcard_*.img 2>/dev/null | tail -n +5 | xargs -r rm -f
+    chmod 755 "$MASTER_IMG" 2>/dev/null || true
+    chmod 755 "$LOG_FILE" 2>/dev/null || true
+    log "INFO" "✓ Integrity Check Passed: SD Card Backup completed successfully ($MASTER_IMG)."
 else
     log "ERROR" "Backup completed but output image failed post-execution integrity check!"
     rm -f "$MASTER_IMG"
