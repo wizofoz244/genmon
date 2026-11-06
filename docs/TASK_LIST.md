@@ -1,21 +1,24 @@
-# Task List: Optimize GenMaintSync Log Extraction & Eliminate CPU Peg
+# Task List: CIFS Network Backup, Ext4 Loop Format Resilience & Watchdog Auto-Recovery
 
 - [x] **Phase 1: Planning & Issue Tracking**
-  - [x] Create GitHub Issue #54 <!-- id: 1 -->
-  - [x] Create dedicated branch `fix/genmaint-sync-cpu-peg` <!-- id: 2 -->
-  - [x] Persist SDLC documentation in `docs/` <!-- id: 3 -->
-- [x] **Phase 2: Implementation**
-  - [x] Rewrite `extract_run_sessions` in `addon/genmaint_sync.py` to single-pass O(N) state machine <!-- id: 4 -->
-  - [x] Add file `mtime` modification checks and non-gz filtering to `fetch_file_logs` <!-- id: 5 -->
-  - [x] Maintain session caching in `_cached_run_sessions` across incremental sync passes <!-- id: 6 -->
-  - [x] Correct 3-tuple return type annotations for `fetch_controller_logs` <!-- id: 7 -->
+  - [x] Create GitHub Issue #55 <!-- id: 1 -->
+  - [x] Create dedicated branch `fix/backup-mount-and-image-errors` <!-- id: 2 -->
+  - [x] Update SDLC documentation in `docs/` and `DEPLOYMENT_GUIDE.md` <!-- id: 3 -->
+- [x] **Phase 2: Implementation & Fixes**
+  - [x] Resolve daily backup mount verification path mismatch and 7-day retention <!-- id: 4 -->
+  - [x] Eliminate CIFS loop device format crashes via `-E nodiscard` and `/etc/mke2fs.conf` <!-- id: 5 -->
+  - [x] Enforce `umask 022` and explicit `chmod 755` permissions across archives, images, and logs <!-- id: 6 -->
+  - [x] Implement real-time progress stream filter `backup_progress_filter.py` with 5% milestones and 60s heartbeats <!-- id: 7 -->
+  - [x] Harden server-side script log error acknowledgment path resolution in `genserv.py` and UI feedback <!-- id: 8 -->
+  - [x] Configure kernel panic auto-reboot, hung-task D-state panic, and Broadcom BCM2835 silicon watchdog <!-- id: 9 -->
 - [x] **Phase 3: Verification & Automated Tests**
-  - [x] Add 10,000-line performance benchmark unit test in `tests/unit/test_genmaint_sync.py` <!-- id: 8 -->
-  - [x] Add interleaved running event and gap handling test cases <!-- id: 9 -->
-  - [x] Run full unit and integration test suites (80/80 tests passing) <!-- id: 10 -->
-  - [x] Verify on Raspberry Pi hardware via one-shot run and systemd service `top` check <!-- id: 11 -->
-- [x] **Phase 4: Remote Push, Merge & Review**
-  - [x] Update walkthrough artifact (`docs/WALKTHROUGH.md`) <!-- id: 12 -->
-  - [x] Commit and push changes to `origin/fix/genmaint-sync-cpu-peg` <!-- id: 13 -->
-  - [x] Merge cleanly to `main` and close Issue #54 <!-- id: 14 -->
-  - [x] Clean up local and remote feature branch <!-- id: 15 -->
+  - [x] Add unit test suite for stream progress filter in `tests/unit/test_backup_progress_filter.py` <!-- id: 10 -->
+  - [x] Verify daily backup archive creation and retention on network share <!-- id: 11 -->
+  - [x] Verify weekly SD card backup format and 10 GB master image creation <!-- id: 12 -->
+  - [x] Test and verify SysRq kernel panic auto-reboot and persistent systemd journal logging <!-- id: 13 -->
+- [x] **Phase 4: Remote Push, Release & Cleanup**
+  - [x] Update `changelog.md` with Oz Custom Addons v1.5.4 release notes <!-- id: 14 -->
+  - [x] Merge cleanly into `main` and tag release `v1.5.4` <!-- id: 15 -->
+  - [x] Push `main` and release tags to GitHub <!-- id: 16 -->
+  - [x] Close GitHub Issue #55 with resolution reference <!-- id: 17 -->
+  - [x] Delete merged feature branch locally and remotely <!-- id: 18 -->
