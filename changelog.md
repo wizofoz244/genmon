@@ -1,6 +1,14 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Oz Custom Addons v1.5.5 - 2026-11-06
+- **Script Logs Acknowledgment Sync & Active Alert Viewport Navigation (#56)**:
+  - **Multi-File Acknowledgment Consolidation (`genserv.py`)**: Unified `load_script_log_acks()` and `save_script_log_ack()` using an `RLock` and multi-file merging strategy across candidate paths (`_SCRIPT_LOG_ACKS_PATHS`), ensuring write operations to fallback files (e.g. `./data/script_log_acks.json` or `./script_log_acks.json`) are immediately loaded on systems where `/etc/genmon/script_log_acks.json` is read-only.
+  - **Targeted Viewport Scroll to Active Alerts (`genmon.js`)**: Updated `_renderTab()` to auto-scroll directly to the first unacknowledged alert line (`.sl-unack-alert`) via `scrollIntoView({ block: 'center', behavior: 'smooth' })`, ensuring users immediately see active error and warning lines instead of having the viewport unconditionally buried at the bottom by informational progress heartbeats.
+  - **Consistent Untimestamped Line Acknowledgment Evaluation**: Included `file_mtime` in `read_log_file` responses and aligned frontend `isAck` evaluation for lines without timestamps to match server evaluation against file modification time.
+  - **Keyword-Aware Progress Filter Severity (`backup_progress_filter.py`)**: Enhanced `BackupProgressFilter.emit()` to inspect incoming unformatted lines for error and warning keywords (`error:`, `failed`, `exception`, `critical`) and apply appropriate severity tags instead of blindly prefixing `[INFO]`.
+  - **Unit Test Coverage**: Added tests in `tests/unit/test_server_log_ack.py` verifying multi-file acknowledgment timestamp merging and progress filter severity inference.
+
 ## Oz Custom Addons v1.5.4 - 2026-11-06
 - **CIFS Network Backup & SD Card Image Auto-Recovery**:
   - **CIFS Loop Device Safety**: Added automatic `discard = false` configuration in `/etc/mke2fs.conf` and patched `image-backup` to pass `-E nodiscard` to `mkfs.ext4`, completely eliminating SMB/CIFS loopback `EOPNOTSUPP` I/O crashes during image formatting.

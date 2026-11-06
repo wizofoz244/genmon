@@ -51,7 +51,14 @@ class BackupProgressFilter:
         """
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
         if not re.match(r"^\[\d{4}-\d{2}-\d{2}", msg):
-            formatted = f"[{ts}] [INFO] {msg}"
+            msg_low = msg.lower()
+            if any(k in msg_low for k in ["error", "fatal", "critical", "exception", "failed"]):
+                lvl = "ERROR"
+            elif any(k in msg_low for k in ["warn", "warning"]):
+                lvl = "WARN"
+            else:
+                lvl = "INFO"
+            formatted = f"[{ts}] [{lvl}] {msg}"
         else:
             formatted = msg
 

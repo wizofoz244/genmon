@@ -5215,6 +5215,7 @@ var Pages = {
       var formattedLines = [];
 
       var ackEpoch = (logData.last_ack_time || 0) * 1000;
+      var fileMtimeEpoch = logData.file_mtime ? (logData.file_mtime * 1000) : 0;
       var lastSeenTs = 0;
 
       lines.forEach(function(line, idx) {
@@ -5234,17 +5235,21 @@ var Pages = {
         if (ackEpoch > 0) {
           if (lineTs > 0) {
             isAck = (lineTs <= ackEpoch);
+          } else if (fileMtimeEpoch > 0) {
+            isAck = (fileMtimeEpoch <= ackEpoch);
           } else {
             isAck = true;
           }
         }
 
         var lineEsc = esc(line);
+        var isUnackAlert = (isErr && !isAck) || (isWarn && !isAck);
+        var alertClass = isUnackAlert ? ' class="sl-unack-alert"' : '';
 
         if (isErr && !isAck) {
-          formattedLines.push('<div style="background:rgba(240,82,82,0.25); color:#ff6b6b; padding:2px 6px; border-radius:4px; margin:2px 0; font-weight:600;">' + lineEsc + '</div>');
+          formattedLines.push('<div' + alertClass + ' style="background:rgba(240,82,82,0.25); color:#ff6b6b; padding:2px 6px; border-radius:4px; margin:2px 0; font-weight:600;">' + lineEsc + '</div>');
         } else if (isWarn && !isAck) {
-          formattedLines.push('<div style="background:rgba(245,158,11,0.25); color:#fbbf24; padding:2px 6px; border-radius:4px; margin:2px 0; font-weight:600;">' + lineEsc + '</div>');
+          formattedLines.push('<div' + alertClass + ' style="background:rgba(245,158,11,0.25); color:#fbbf24; padding:2px 6px; border-radius:4px; margin:2px 0; font-weight:600;">' + lineEsc + '</div>');
         } else if (isErr || isWarn) {
           /* Acknowledged historical error/warning */
           formattedLines.push('<div style="color:var(--text-muted); opacity:0.85; padding:1px 0;">' + lineEsc + '</div>');
@@ -5258,7 +5263,14 @@ var Pages = {
       } else {
         $('#sl-content').html(formattedLines.join(''));
         var el = document.getElementById('sl-content');
-        if (el) el.scrollTop = el.scrollHeight;
+        if (el) {
+          var firstAlert = el.querySelector('.sl-unack-alert');
+          if (firstAlert) {
+            firstAlert.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          } else {
+            el.scrollTop = el.scrollHeight;
+          }
+        }
       }
     }
   },

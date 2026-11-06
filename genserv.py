@@ -956,7 +956,7 @@ _script_logs_cache_lock = threading.Lock()
 _start_info_cache = {"timestamp": 0, "raw_data": None}
 _start_info_cache_lock = threading.Lock()
 
-_script_log_acks_lock = threading.Lock()
+_script_log_acks_lock = threading.RLock()
 _SCRIPT_LOG_ACKS_PATHS = [
     "/etc/genmon/script_log_acks.json",
     "./data/script_log_acks.json",
@@ -983,9 +983,14 @@ def get_script_log_acks_path(for_write: bool = False) -> str:
             return "./data/script_log_acks.json"
         return "./script_log_acks.json"
 
-    for p in _SCRIPT_LOG_ACKS_PATHS:
-        if os.path.exists(p):
-            return p
+    # For reading: find existing candidate files. If multiple exist, return the one with newest mtime
+    existing = [p for p in _SCRIPT_LOG_ACKS_PATHS if os.path.exists(p)]
+    if existing:
+        try:
+            return max(existing, key=lambda p: os.path.getmtime(p))
+        except Exception:
+            return existing[0]
+
     if os.path.isdir("/etc/genmon") and os.access("/etc/genmon", os.W_OK):
         return "/etc/genmon/script_log_acks.json"
     if os.path.isdir("./data"):
@@ -996,20 +1001,34 @@ def get_script_log_acks_path(for_write: bool = False) -> str:
 def load_script_log_acks() -> Dict[str, Dict[str, Any]]:
     """Load persisted script log acknowledgment timestamps.
 
+    Merges all existing candidate files, taking the entry with the highest
+    epoch timestamp for each routine to guarantee acks are never lost across
+    permission boundaries or legacy fallback files.
+
     Returns:
         Dictionary mapping log key to acknowledgment details containing
         'epoch' (float) and 'timestamp' (ISO-like string).
     """
     with _script_log_acks_lock:
-        path = get_script_log_acks_path()
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, dict):
-                        return data
-            except Exception as e:
-                LogErrorLine(f"Error reading script_log_acks file ({path}): {e}")
+        resolved_path = get_script_log_acks_path()
+        candidates = [resolved_path] + [p for p in _SCRIPT_LOG_ACKS_PATHS if p != resolved_path]
+        merged: Dict[str, Dict[str, Any]] = {}
+        for p in candidates:
+            if os.path.exists(p):
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, dict):
+                            for k, v in data.items():
+                                if isinstance(v, dict) and "epoch" in v:
+                                    cur_epoch = float(merged.get(k, {}).get("epoch", -1.0))
+                                    if float(v.get("epoch", 0.0)) > cur_epoch:
+                                        merged[k] = v
+                except Exception as e:
+                    LogErrorLine(f"Error reading script_log_acks file ({p}): {e}")
+
+        if merged:
+            return merged
 
         migrated: Dict[str, Dict[str, Any]] = {}
         try:
@@ -1052,15 +1071,7 @@ def save_script_log_ack(log_type: str, epoch_ts: Optional[float] = None) -> Tupl
 
     with _script_log_acks_lock:
         path = get_script_log_acks_path(for_write=True)
-        current: Dict[str, Any] = {}
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, dict):
-                        current = data
-            except Exception:
-                current = {}
+        current = load_script_log_acks()
 
         for t in targets:
             current[t] = {"epoch": epoch_ts, "timestamp": dt_str}
@@ -1105,6 +1116,7 @@ def get_script_logs_json(use_cache: bool = False, ttl: int = 10):
                 "has_unack_error": False,
                 "has_unack_warning": False,
                 "last_ack_time": ack_ts,
+                "file_mtime": None,
             }
 
         try:
@@ -1173,6 +1185,7 @@ def get_script_logs_json(use_cache: bool = False, ttl: int = 10):
                     "has_unack_error": has_unack_err,
                     "has_unack_warning": has_unack_warn,
                     "last_ack_time": ack_ts,
+                    "file_mtime": file_mtime,
                 }
         except FileNotFoundError:
             return {
@@ -1183,6 +1196,7 @@ def get_script_logs_json(use_cache: bool = False, ttl: int = 10):
                 "has_unack_error": False,
                 "has_unack_warning": False,
                 "last_ack_time": ack_ts,
+                "file_mtime": None,
             }
         except Exception as e:
             return {
@@ -1193,6 +1207,7 @@ def get_script_logs_json(use_cache: bool = False, ttl: int = 10):
                 "has_unack_error": True,
                 "has_unack_warning": False,
                 "last_ack_time": ack_ts,
+                "file_mtime": None,
             }
 
     sync_paths = [

@@ -39,12 +39,13 @@
               has_warning: false,
               has_unack_error: window._server_unack_error,
               has_unack_warning: false,
-              last_ack_time: window._server_last_ack
+              last_ack_time: window._server_last_ack,
+              file_mtime: 0
             },
-            backup_log: { path: '/home/genmonpi/backup.log', lines: ['[INFO] Backup normal.'], has_error: false, has_warning: false, has_unack_error: false, has_unack_warning: false, last_ack_time: 0 },
-            sdcard_backup_log: { path: '/home/genmonpi/sdcard_backup.log', lines: ['[INFO] SD Backup normal.'], has_error: false, has_warning: false, has_unack_error: false, has_unack_warning: false, last_ack_time: 0 },
-            net_watchdog_log: { path: '/var/log/net-watchdog.log', lines: ['[INFO] Network connected.'], has_error: false, has_warning: false, has_unack_error: false, has_unack_warning: false, last_ack_time: 0 },
-            genwebpush_log: { path: '/var/log/genwebpush.log', lines: ['[INFO] Web push active.'], has_error: false, has_warning: false, has_unack_error: false, has_unack_warning: false, last_ack_time: 0 }
+            backup_log: { path: '/home/genmonpi/backup.log', lines: ['[INFO] Backup normal.'], has_error: false, has_warning: false, has_unack_error: false, has_unack_warning: false, last_ack_time: 0, file_mtime: 0 },
+            sdcard_backup_log: { path: '/home/genmonpi/sdcard_backup.log', lines: ['[INFO] SD Backup normal.'], has_error: false, has_warning: false, has_unack_error: false, has_unack_warning: false, last_ack_time: 0, file_mtime: 0 },
+            net_watchdog_log: { path: '/var/log/net-watchdog.log', lines: ['[INFO] Network connected.'], has_error: false, has_warning: false, has_unack_error: false, has_unack_warning: false, last_ack_time: 0, file_mtime: 0 },
+            genwebpush_log: { path: '/var/log/genwebpush.log', lines: ['[INFO] Web push active.'], has_error: false, has_warning: false, has_unack_error: false, has_unack_warning: false, last_ack_time: 0, file_mtime: 0 }
           });
         }, 10);
       } else if (endpoint.indexOf('ack_script_log') !== -1) {

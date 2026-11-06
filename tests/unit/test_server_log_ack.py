@@ -166,6 +166,52 @@ class TestServerScriptLogAck(unittest.TestCase):
                             self.assertIn("backup", acks)
                             self.assertGreater(acks["backup"]["epoch"], 0)
 
+    def test_load_script_log_acks_merges_multiple_candidate_files(self) -> None:
+        """Test that load_script_log_acks merges across paths taking the highest epoch."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_a = os.path.join(tmpdir, "acks_a.json")
+            file_b = os.path.join(tmpdir, "acks_b.json")
+
+            data_a = {
+                "sync": {"epoch": 1000.0, "timestamp": "2026-08-01 10:00:00"},
+                "sdcard": {"epoch": 500.0, "timestamp": "2026-08-01 05:00:00"},
+            }
+            data_b = {
+                "sdcard": {"epoch": 2000.0, "timestamp": "2026-08-01 20:00:00"},
+                "backup": {"epoch": 1500.0, "timestamp": "2026-08-01 15:00:00"},
+            }
+
+            with open(file_a, "w", encoding="utf-8") as f:
+                json.dump(data_a, f)
+            with open(file_b, "w", encoding="utf-8") as f:
+                json.dump(data_b, f)
+
+            with patch("genserv._SCRIPT_LOG_ACKS_PATHS", [file_a, file_b]):
+                with patch("genserv.get_script_log_acks_path", return_value=file_b):
+                    merged = genserv.load_script_log_acks()
+                    self.assertIn("sync", merged)
+                    self.assertEqual(merged["sync"]["epoch"], 1000.0)
+                    self.assertIn("backup", merged)
+                    self.assertEqual(merged["backup"]["epoch"], 1500.0)
+                    self.assertIn("sdcard", merged)
+                    self.assertEqual(merged["sdcard"]["epoch"], 2000.0)
+
+    def test_backup_progress_filter_severity_tagging(self) -> None:
+        """Test that BackupProgressFilter tags error lines as [ERROR] instead of [INFO]."""
+        from backup_progress_filter import BackupProgressFilter
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = os.path.join(tmpdir, "test.log")
+            bpf = BackupProgressFilter(log_file=log_path)
+            bpf.emit("rsync error: error in rsync protocol data stream")
+            bpf.emit("warning: low disk space detected")
+            bpf.emit("Transferring file chunks")
+
+            with open(log_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+                self.assertTrue(any("[ERROR]" in l and "rsync error" in l for l in lines))
+                self.assertTrue(any("[WARN]" in l and "low disk space" in l for l in lines))
+                self.assertTrue(any("[INFO]" in l and "Transferring file" in l for l in lines))
+
 
 if __name__ == "__main__":
     unittest.main()
